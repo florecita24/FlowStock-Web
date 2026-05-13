@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Package, TrendingUp, HelpCircle, Settings } from "lucide-react";
+import { LayoutDashboard, Package, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function Sidebar() {
@@ -20,16 +20,6 @@ export default function Sidebar() {
       label: "Sales Prediction",
       href: "/sales",
       icon: TrendingUp,
-    },
-    {
-      label: "Customer Issue Analyzer",
-      href: "/issues",
-      icon: HelpCircle,
-    },
-    {
-      label: "System & AI Management",
-      href: "/system",
-      icon: Settings,
     },
   ];
 

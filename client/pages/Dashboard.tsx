@@ -1,30 +1,35 @@
-import { DollarSign, AlertTriangle, Box, TrendingUp, AlertCircle, CheckCircle2, Download, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { DollarSign, AlertTriangle, Box, TrendingUp, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import Layout from "@/components/Layout";
 import StatCard from "@/components/StatCard";
 
 export default function Dashboard() {
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferDone, setTransferDone] = useState(false);
+
+  const handleExecuteTransfer = () => {
+    setTransferDialogOpen(false);
+    setTransferDone(true);
+    setTimeout(() => setTransferDone(false), 3000);
+  };
+
   return (
     <Layout>
       <div className="p-8 space-y-8">
         {/* Header Section */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Overview</h1>
-            <p className="text-sm text-white mt-1">
-              AI-powered insights and operational metrics.
-            </p>
-          </div>
-          <div className="flex gap-3">
-            <Button variant="outline" className="bg-white border-border flex items-center gap-2">
-              <Download className="w-4 h-4" />
-              Export Report
-            </Button>
-            <Button className="bg-secondary text-secondary-foreground hover:bg-secondary/80 flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              AI Forecast
-            </Button>
-          </div>
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Overview</h1>
+          <p className="text-sm text-white mt-1">
+            AI-powered insights and operational metrics.
+          </p>
         </div>
 
         {/* Stat Cards Grid */}
@@ -74,7 +79,6 @@ export default function Dashboard() {
                 Regional Stock Distribution
               </h2>
               <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl h-64 flex items-center justify-center relative">
-                {/* Simplified map visualization */}
                 <div className="absolute inset-0 flex items-center justify-center">
                   <svg
                     viewBox="0 0 960 500"
@@ -88,31 +92,25 @@ export default function Dashboard() {
                     </g>
                   </svg>
                 </div>
-
-                {/* Data overlay */}
                 <div className="absolute bottom-6 left-6 bg-black text-white rounded-lg px-4 py-2 text-sm">
                   <div className="font-semibold">Jakarta Hub</div>
                   <div className="text-xs text-gray-300">SKU: 4920</div>
                   <div className="text-xs text-orange-300">2 months</div>
                 </div>
-
-                {/* Location indicators */}
                 <div className="absolute top-12 left-24 w-3 h-3 bg-orange-500 rounded-full" />
                 <div className="absolute top-32 left-40 w-3 h-3 bg-orange-400 rounded-full" />
                 <div className="absolute top-20 right-32 w-2 h-2 bg-orange-300 rounded-full" />
               </div>
-
-              {/* Legend - Positioned at top right */}
-            <div className="absolute top-6 right-6 flex gap-4 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-lg">
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-orange-500" />
-                <span className="text-xs text-muted-foreground">Healthy</span>
+              <div className="absolute top-6 right-6 flex gap-4 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-orange-500" />
+                  <span className="text-xs text-muted-foreground">Healthy</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-red-500" />
+                  <span className="text-xs text-muted-foreground">Critical</span>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-red-500" />
-                <span className="text-xs text-muted-foreground">Critical</span>
-              </div>
-            </div>
             </div>
           </div>
 
@@ -136,13 +134,14 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-foreground text-sm">
                       Impending Stockout
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      2m ago
-                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">2m ago</p>
                     <p className="text-sm text-foreground mt-2">
                       Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.
                     </p>
-                    <Button className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500">
+                    <Button
+                      className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
+                      onClick={() => setTransferDialogOpen(true)}
+                    >
                       Execute Transfer Now
                     </Button>
                   </div>
@@ -157,9 +156,7 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-foreground text-sm">
                       Demand Spike Detected
                     </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      1h ago
-                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">1h ago</p>
                     <p className="text-sm text-foreground mt-2">
                       ↑34% predicted demand for Smart Watches next week due to regional promotion.
                     </p>
@@ -178,9 +175,7 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-white text-sm">
                       Transfer Executed
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1">
-                      1h ago
-                    </p>
+                    <p className="text-xs text-gray-500 mt-1">1h ago</p>
                     <p className="text-sm text-gray-300 mt-2">
                       Inventory routing initiated successfully.
                     </p>
@@ -191,6 +186,64 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Execute Transfer Dialog */}
+      <Dialog open={transferDialogOpen} onOpenChange={setTransferDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Konfirmasi Transfer Stok</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+              <p className="text-sm font-semibold text-red-700">Impending Stockout</p>
+              <p className="text-sm text-foreground mt-1">
+                Jakarta Warehouse akan kehabisan Wireless Earbuds (SKU 4920) dalam 48 jam.
+              </p>
+            </div>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Produk</span>
+                <span className="font-semibold">Wireless Earbuds</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Jumlah Transfer</span>
+                <span className="font-semibold">500 units</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Dari</span>
+                <span className="font-semibold">Jakarta Hub</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Estimasi Tiba</span>
+                <span className="font-semibold">2 hari</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Penghematan</span>
+                <span className="font-semibold text-green-600">Rp 1.500.000</span>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>
+              Batal
+            </Button>
+            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={handleExecuteTransfer}>
+              ✓ Konfirmasi Transfer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Success Toast */}
+      {transferDone && (
+        <div className="fixed bottom-8 right-8 bg-gray-900 text-white rounded-lg px-6 py-4 shadow-lg flex items-center gap-3 z-50">
+          <div className="w-4 h-4 bg-orange-500 rounded-full animate-pulse" />
+          <div>
+            <p className="font-semibold text-sm">Transfer Sedang Diproses...</p>
+            <p className="text-xs text-gray-400">Routing 500 units dari Jakarta Hub</p>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
