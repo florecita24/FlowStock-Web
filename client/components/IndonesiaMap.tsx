@@ -17,19 +17,19 @@ const makeIcon = (color: string) =>
   });
 
 const statusColor: Record<string, string> = {
-  healthy:  "#f97316",
-  critical: "#ef4444",
-  overstock:"#f59e0b",
+  healthy:   "#f97316",
+  critical:  "#ef4444",
+  overstock: "#f59e0b",
 };
 
-const warehouses = [
-  { name: "Jakarta Hub",   lat: -6.2088,  lng: 106.8456, stock: 4920, status: "healthy",   months: 2 },
-  { name: "Surabaya Hub",  lat: -7.2575,  lng: 112.7521, stock: 2310, status: "healthy",   months: 3 },
-  { name: "Medan Hub",     lat:  3.5952,  lng:  98.6722, stock: 1850, status: "critical",  months: 1 },
-  { name: "Makassar Hub",  lat: -5.1477,  lng: 119.4327, stock:  980, status: "healthy",   months: 2 },
-  { name: "Bandung Hub",   lat: -6.9175,  lng: 107.6191, stock:  760, status: "overstock", months: 5 },
-  { name: "Semarang Hub",  lat: -6.9932,  lng: 110.4203, stock: 1120, status: "healthy",   months: 2 },
-  { name: "Denpasar Hub",  lat: -8.6705,  lng: 115.2126, stock:  430, status: "critical",  months: 1 },
+export const warehouses = [
+  { name: "Jakarta Hub",  lat: -6.2088, lng: 106.8456, stock: 4920, status: "healthy",   months: 2 },
+  { name: "Surabaya Hub", lat: -7.2575, lng: 112.7521, stock: 2310, status: "healthy",   months: 3 },
+  { name: "Medan Hub",    lat:  3.5952, lng:  98.6722, stock: 1850, status: "critical",  months: 1 },
+  { name: "Makassar Hub", lat: -5.1477, lng: 119.4327, stock:  980, status: "healthy",   months: 2 },
+  { name: "Bandung Hub",  lat: -6.9175, lng: 107.6191, stock:  760, status: "overstock", months: 5 },
+  { name: "Semarang Hub", lat: -6.9932, lng: 110.4203, stock: 1120, status: "healthy",   months: 2 },
+  { name: "Denpasar Hub", lat: -8.6705, lng: 115.2126, stock:  430, status: "critical",  months: 1 },
 ];
 
 function FitBounds() {
@@ -40,9 +40,11 @@ function FitBounds() {
   return null;
 }
 
-export default function IndonesiaMap() {
+interface Props { className?: string; }
+
+export default function IndonesiaMap({ className = "w-full h-64" }: Props) {
   return (
-    <div className="w-full h-64 rounded-xl overflow-hidden border border-border">
+    <div className={`rounded-xl overflow-hidden border border-border ${className}`}>
       <MapContainer
         center={[-2.5, 118]}
         zoom={4}
@@ -66,9 +68,9 @@ export default function IndonesiaMap() {
           >
             <Popup>
               <div style={{ fontSize: 12, fontWeight: 600 }}>{wh.name}</div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>SKU: {wh.stock.toLocaleString()}</div>
+              <div style={{ fontSize: 11, color: "#6b7280" }}>Stock: {wh.stock.toLocaleString()}</div>
               <div style={{ fontSize: 11, color: statusColor[wh.status] }}>
-                {wh.months} {wh.months === 1 ? "month" : "months"} stock
+                {wh.months} {wh.months === 1 ? "month" : "months"} supply
               </div>
             </Popup>
           </Marker>
