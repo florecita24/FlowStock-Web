@@ -2,6 +2,16 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import Layout from "@/components/Layout";
 import { Lightbulb } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
+} from "recharts";
 
 const productList = [
   "Pencil 2B",
@@ -13,7 +23,7 @@ const productList = [
   "Kaos Polos",
 ];
 
-const productChartData: Record<string, number[]> = {
+const rawData: Record<string, number[]> = {
   "Pencil 2B":        [300, 320, 280, 350, 400, 380, 420, 450, 390, 360, 340, 310],
   "Wireless Earbuds": [150, 180, 200, 190, 250, 300, 280, 350, 320, 280, 240, 210],
   "Tablet Cases":     [80,  90,  85, 100, 120, 110, 130, 140, 120, 100,  95,  85],
@@ -23,8 +33,30 @@ const productChartData: Record<string, number[]> = {
   "Kaos Polos":       [400, 380, 420, 450, 500, 470, 520, 560, 510, 480, 440, 410],
 };
 
-const weeks = ["M1","M2","M3","M4","M5","M6","M7","M8","M9","M10","M11","M12"];
-const HISTORICAL_CUTOFF = 6; // first 6 weeks are historical, rest are projection
+const HISTORICAL_CUTOFF = 6;
+
+function buildChartData(product: string) {
+  const values = rawData[product];
+  return values.map((val, i) => ({
+    week: `M${i + 1}`,
+    historical: i < HISTORICAL_CUTOFF ? val : undefined,
+    projection: i >= HISTORICAL_CUTOFF - 1 ? val : undefined,
+  }));
+}
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload && payload.length) {
+    const val = payload[0]?.value ?? payload[1]?.value;
+    const isProjection = payload[0]?.name === "projection";
+    return (
+      <div className="bg-gray-900 text-white rounded-xl px-4 py-3 shadow-xl text-sm">
+        <p className="text-gray-300 font-medium">{label} {isProjection ? "(Proyeksi)" : "(Historical)"}</p>
+        <p className="text-green-400 font-bold text-base mt-0.5">{val?.toLocaleString()} units</p>
+      </div>
+    );
+  }
+  return null;
+};
 
 export default function SalesPrediction() {
   const [selectedProduct, setSelectedProduct] = useState("Pencil 2B");
@@ -33,45 +65,15 @@ export default function SalesPrediction() {
     marketing: "Payday Sale",
   });
 
-  const data = productChartData[selectedProduct];
-  const maxVal = Math.max(...data);
-  const yMax = Math.ceil(maxVal / 100) * 100 + 100;
-
-  const chartWidth = 500;
-  const chartHeight = 260;
-  const padLeft = 50;
-  const padRight = 20;
-  const padTop = 20;
-  const padBottom = 40;
-  const innerW = chartWidth - padLeft - padRight;
-  const innerH = chartHeight - padTop - padBottom;
-
-  const toPoint = (i: number, val: number) => ({
-    x: padLeft + (i / (weeks.length - 1)) * innerW,
-    y: padTop + innerH - (val / yMax) * innerH,
-  });
-
-  const points = data.map((val, i) => toPoint(i, val));
-
-  const histPath = points
-    .slice(0, HISTORICAL_CUTOFF)
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-    .join(" ");
-
-  const projPath = points
-    .slice(HISTORICAL_CUTOFF - 1)
-    .map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`)
-    .join(" ");
-
-  const yTicks = [0, Math.round(yMax * 0.25), Math.round(yMax * 0.5), Math.round(yMax * 0.75), yMax];
-
-  const peakIdx = data.indexOf(maxVal);
-  const peakPoint = points[peakIdx];
+  const chartData = buildChartData(selectedProduct);
+  const allValues = rawData[selectedProduct];
+  const maxVal = Math.max(...allValues);
+  const peakIdx = allValues.indexOf(maxVal);
 
   return (
     <Layout>
       <div className="p-8 space-y-6">
-        {/* Header Section */}
+        {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-foreground">
             Predictive Analytics & What-If Simulator
@@ -81,27 +83,25 @@ export default function SalesPrediction() {
           </p>
         </div>
 
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Main Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* External Variables Panel */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col">
             <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-purple-200 rounded-lg flex items-center justify-center">
-                <span className="text-purple-700 font-bold text-sm">⚙️</span>
+              <div className="w-8 h-8 bg-purple-200 rounded-lg flex items-center justify-center text-purple-700 font-bold text-sm">
+                ⚙️
               </div>
               <h2 className="text-lg font-bold text-foreground">External Variables</h2>
             </div>
 
-            <div className="space-y-6 flex-1">
+            <div className="space-y-5 flex-1">
               {/* Kuartal */}
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2">
-                  Kuartal
-                </label>
+                <label className="block text-sm font-semibold text-foreground mb-2">Kuartal</label>
                 <select
                   value={variables.kuartal}
                   onChange={(e) => setVariables({ ...variables, kuartal: e.target.value })}
-                  className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option>Jan - Mar</option>
                   <option>Apr - Jun</option>
@@ -118,159 +118,121 @@ export default function SalesPrediction() {
                 <select
                   value={variables.marketing}
                   onChange={(e) => setVariables({ ...variables, marketing: e.target.value })}
-                  className="w-full px-4 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 >
                   <option>Payday Sale</option>
                   <option>Flash Sale</option>
                 </select>
               </div>
 
-              {/* Info Box */}
-              <div className="bg-muted/50 rounded-lg p-4">
+              {/* Info */}
+              <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-xs text-muted-foreground flex gap-2">
                   <span className="text-primary font-bold">ℹ️</span>
-                  <span>
-                    Model adjusts prediction dynamically based on historical
-                    mapping of selected variables.
-                  </span>
+                  <span>Model adjusts prediction dynamically based on historical mapping of selected variables.</span>
                 </p>
               </div>
             </div>
 
-            {/* Run Simulation Button */}
+            {/* Run Simulation */}
             <div className="mt-6 pt-4 border-t border-border">
-              <Button className="w-full bg-primary text-primary-foreground">
-                Run Simulation
-              </Button>
+              <Button className="w-full bg-primary text-primary-foreground">Run Simulation</Button>
             </div>
           </div>
 
-          {/* Sales Projection Chart */}
-          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-border">
-            <div className="flex items-center justify-between mb-2">
+          {/* Chart */}
+          <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-border">
+            {/* Chart Header */}
+            <div className="flex items-center justify-between mb-1">
               <h2 className="text-lg font-bold text-foreground">
                 Sales Projection (1 Kuartal)
               </h2>
-              {/* Product Dropdown */}
               <select
                 value={selectedProduct}
                 onChange={(e) => setSelectedProduct(e.target.value)}
                 className="px-3 py-1.5 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               >
                 {productList.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
+                  <option key={p}>{p}</option>
                 ))}
               </select>
             </div>
 
-            <div className="flex items-center gap-4 mb-4">
+            {/* Legend */}
+            <div className="flex items-center gap-6 mb-5 mt-2">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-blue-500" />
+                <div className="w-8 h-0.5 bg-blue-500" />
                 <span className="text-xs text-muted-foreground">Historical Data</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-6 h-0.5 border-t-2 border-dashed border-green-500" />
+                <div className="w-8 h-0 border-t-2 border-dashed border-green-500" />
                 <span className="text-xs text-muted-foreground">AI Projection</span>
               </div>
             </div>
 
-            {/* Chart */}
-            <svg width={chartWidth} height={chartHeight} className="w-full">
-              {/* Grid lines & Y labels */}
-              {yTicks.map((val) => {
-                const y = padTop + innerH - (val / yMax) * innerH;
-                return (
-                  <g key={`grid-${val}`}>
-                    <line
-                      x1={padLeft} y1={y}
-                      x2={padLeft + innerW} y2={y}
-                      stroke="#e5e7eb" strokeWidth="1"
-                    />
-                    <text
-                      x={padLeft - 6} y={y + 4}
-                      fontSize="11" fill="#9ca3af" textAnchor="end"
-                    >
-                      {val}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* X-axis labels */}
-              {weeks.map((w, i) => {
-                const x = padLeft + (i / (weeks.length - 1)) * innerW;
-                return (
-                  <text
-                    key={`x-${i}`}
-                    x={x} y={padTop + innerH + 20}
-                    fontSize="11" fill="#9ca3af" textAnchor="middle"
-                  >
-                    {w}
-                  </text>
-                );
-              })}
-
-              {/* Historical line */}
-              <path
-                d={histPath}
-                stroke="#3b82f6" strokeWidth="3"
-                fill="none" strokeLinecap="round" strokeLinejoin="round"
-              />
-
-              {/* Projection line (dashed) */}
-              <path
-                d={projPath}
-                stroke="#10b981" strokeWidth="2"
-                fill="none" strokeDasharray="5,5"
-                strokeLinecap="round" strokeLinejoin="round"
-              />
-
-              {/* Data points */}
-              {points.map((p, i) => (
-                <circle
-                  key={`pt-${i}`}
-                  cx={p.x} cy={p.y} r="4"
-                  fill={i < HISTORICAL_CUTOFF ? "#3b82f6" : "#10b981"}
-                  opacity={i >= HISTORICAL_CUTOFF ? 0.7 : 1}
+            {/* Recharts */}
+            <ResponsiveContainer width="100%" height={340}>
+              <LineChart data={chartData} margin={{ top: 36, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                <XAxis
+                  dataKey="week"
+                  tick={{ fontSize: 12, fill: "#9ca3af" }}
+                  axisLine={false}
+                  tickLine={false}
                 />
-              ))}
+                <YAxis
+                  tick={{ fontSize: 12, fill: "#9ca3af" }}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={(v) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : v}
+                  width={45}
+                />
+                <Tooltip content={<CustomTooltip />} />
 
-              {/* Peak tooltip */}
-              {peakPoint && (
-                <g>
-                  <line
-                    x1={peakPoint.x} y1={peakPoint.y - 8}
-                    x2={peakPoint.x} y2={peakPoint.y - 50}
-                    stroke="#1f2937" strokeWidth="1"
-                  />
-                  <rect
-                    x={peakPoint.x - 55} y={peakPoint.y - 78}
-                    width="110" height="32"
-                    fill="#1f2937" rx="6"
-                  />
-                  <text
-                    x={peakPoint.x} y={peakPoint.y - 62}
-                    fontSize="11" fill="#e5e7eb"
-                    textAnchor="middle" fontWeight="500"
-                  >
-                    {weeks[peakIdx]} (Peak)
-                  </text>
-                  <text
-                    x={peakPoint.x} y={peakPoint.y - 50}
-                    fontSize="12" fill="#10b981"
-                    textAnchor="middle" fontWeight="bold"
-                  >
-                    {maxVal.toLocaleString()} units
-                  </text>
-                </g>
-              )}
-            </svg>
+                {/* Mark the split between historical and projection */}
+                <ReferenceLine
+                  x={`M${HISTORICAL_CUTOFF}`}
+                  stroke="#e5e7eb"
+                  strokeDasharray="4 4"
+                  label={{ value: "Today", position: "top", fontSize: 11, fill: "#6b7280" }}
+                />
+
+                {/* Historical line */}
+                <Line
+                  type="monotone"
+                  dataKey="historical"
+                  stroke="#3b82f6"
+                  strokeWidth={3}
+                  dot={false}
+                  activeDot={{ r: 6, fill: "#3b82f6" }}
+                  connectNulls={false}
+                />
+
+                {/* Projection line dashed */}
+                <Line
+                  type="monotone"
+                  dataKey="projection"
+                  stroke="#10b981"
+                  strokeWidth={2.5}
+                  strokeDasharray="6 4"
+                  dot={false}
+                  activeDot={{ r: 6, fill: "#10b981" }}
+                  connectNulls={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+
+            {/* Peak info */}
+            <div className="mt-3 flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Peak:</span>
+              <span className="text-xs font-semibold text-green-600">
+                M{peakIdx + 1} — {maxVal.toLocaleString()} units
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* AI Insight Section */}
+        {/* AI Insight */}
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-border">
           <div className="flex items-start gap-4">
             <div className="w-10 h-10 bg-pink-200 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -279,16 +241,14 @@ export default function SalesPrediction() {
             <div className="flex-1">
               <h3 className="font-bold text-foreground mb-2">AI Insight</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Peningkatan{" "}
-                <span className="font-semibold text-foreground">
-                  "{variables.marketing}"
-                </span>{" "}
+                Penerapan{" "}
+                <span className="font-semibold text-foreground">"{variables.marketing}"</span>{" "}
                 pada kuartal{" "}
                 <span className="font-semibold text-foreground">{variables.kuartal}</span>{" "}
                 diterjemahkan ke permintaan rata-rata sebesar{" "}
-                <span className="font-bold text-primary">35%</span>. Peningkatan buffer stock ditambah{" "}
-                <span className="font-semibold">sebelum minggu ke-5</span>, untuk menghadapi risiko
-                stockout pada kategori produk High-Demand.
+                <span className="font-bold text-primary">35%</span>. Peningkatan buffer stock
+                ditambah <span className="font-semibold">sebelum minggu ke-5</span>, untuk
+                menghadapi risiko stockout pada kategori produk High-Demand.
               </p>
             </div>
           </div>

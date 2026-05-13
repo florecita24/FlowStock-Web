@@ -24,13 +24,13 @@ export default function Sidebar() {
   ];
 
   return (
-    <div className="w-40 bg-sidebar border-r border-sidebar-border flex flex-col py-6 px-4">
+    <div className="w-64 bg-sidebar border-r border-sidebar-border flex flex-col py-6 px-4">
       {/* Logo */}
       <div className="mb-8 px-2">
         <img
           src="https://cdn.builder.io/api/v1/image/assets%2F18e959be0d9d48c18aa708fdd96a5ba1%2Ff92fec997efb4a8daa106b7fb0b4e757?format=webp&width=200&height=80"
           alt="FlowStock Logo"
-          className="h-12 w-auto"
+          className="h-16 w-auto"
         />
       </div>
 
@@ -44,13 +44,13 @@ export default function Sidebar() {
               key={item.href}
               to={item.href}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap",
                 isActive
                   ? "bg-primary text-primary-foreground"
                   : "text-foreground hover:bg-muted"
               )}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className="w-5 h-5 flex-shrink-0" />
               <span>{item.label}</span>
             </Link>
           );

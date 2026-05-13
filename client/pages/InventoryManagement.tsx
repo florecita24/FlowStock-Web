@@ -1,4 +1,4 @@
-import { Search, ChevronDown, TrendingUp } from "lucide-react";
+import { Search, ChevronDown, TrendingUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Layout from "@/components/Layout";
@@ -25,11 +25,11 @@ const inventoryData: InventoryItem[] = [
     name: "Pencil 2B",
     category: "stationery",
     currentStock: 100,
-    predictedDemand: "600 (↓600 short)",
-    predictedDemandShort: "↓600 short",
+    predictedDemand: 600,
+    predictedDemandShort: "↓500 short",
     expiryDate: "N/A",
     status: "Critical",
-    recommendedAction: "⚡Transfer",
+    recommendedAction: "⚡ Transfer",
     harga: "Rp 5.000",
     berat: "10g",
   },
@@ -87,9 +87,10 @@ const inventoryData: InventoryItem[] = [
     category: "skincare",
     currentStock: 80,
     predictedDemand: 150,
+    predictedDemandShort: "↓70 short",
     expiryDate: "03/2026",
     status: "Critical",
-    recommendedAction: "⚡Transfer",
+    recommendedAction: "⚡ Transfer",
     harga: "Rp 175.000",
     berat: "30g",
   },
@@ -109,47 +110,121 @@ const inventoryData: InventoryItem[] = [
 
 const categories = ["All Categories", "Electronic", "Fashion", "Stationery", "Make Up", "Skincare"];
 
+function getStatusColor(status: string) {
+  switch (status) {
+    case "Critical": return "bg-red-100 text-red-700";
+    case "Overstock": return "bg-orange-100 text-orange-700";
+    case "Healthy": return "bg-green-100 text-green-700";
+    default: return "bg-gray-100 text-gray-700";
+  }
+}
+
+function AIRecommendationPanel({ item, onApprove, onClose }: {
+  item: InventoryItem;
+  onApprove: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <tr>
+      <td colSpan={9} className="px-4 pb-4 bg-orange-50/50">
+        <div className="border border-orange-200 rounded-xl p-5 bg-white shadow-sm mt-1">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-purple-200 rounded-full flex items-center justify-center">
+                <span className="text-purple-700 font-bold text-xs">AI</span>
+              </div>
+              <h3 className="font-bold text-foreground">AI Recommendation</h3>
+            </div>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            {/* Best Option */}
+            <div className="border-2 border-orange-400 rounded-xl p-4 bg-orange-50 relative">
+              <div className="absolute -top-3 left-4 bg-orange-500 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+                BEST OPTION
+              </div>
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-orange-200 rounded-full flex items-center justify-center">
+                  <TrendingUp className="w-5 h-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="font-bold text-foreground text-sm">Transfer Stock</p>
+                  <p className="text-xs text-muted-foreground">From Jakarta Hub</p>
+                </div>
+                <div className="ml-auto text-right">
+                  <p className="font-bold text-orange-600">500 units</p>
+                  <p className="text-xs text-green-600">Save Rp 1.500.000</p>
+                </div>
+              </div>
+              <p className="text-xs text-foreground">
+                Sufficient overstock in Jakarta Hub. Transit 2 days, matches demand spike.
+              </p>
+            </div>
+
+            {/* Supplier Option */}
+            <div className="border border-border rounded-xl p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center">
+                  <span className="text-gray-600 text-sm">📦</span>
+                </div>
+                <div>
+                  <p className="font-bold text-foreground text-sm">Order from Supplier</p>
+                  <p className="text-xs text-muted-foreground">Indostationery Ltd.</p>
+                </div>
+                <div className="ml-auto text-right">
+                  <p className="font-bold text-foreground">Rp 1.000.000</p>
+                  <p className="text-xs text-muted-foreground">inc. 7.000/unit</p>
+                </div>
+              </div>
+              <p className="text-xs text-foreground">
+                Lead time 4 days. Stockout risk before delivery. Uses additional capital.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-border">
+            <button className="px-4 py-2 bg-white border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors">
+              Order from Supplier
+            </button>
+            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={onApprove}>
+              ✓ Approve Transfer
+            </Button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
 export default function InventoryManagement() {
-  const [selectedAlert, setSelectedAlert] = useState<string | null>("1");
+  const [openSolution, setOpenSolution] = useState<string | null>(null);
   const [showProcessing, setShowProcessing] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("All Categories");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Critical":
-        return "bg-red-100 text-red-700";
-      case "Overstock":
-        return "bg-orange-100 text-orange-700";
-      case "Healthy":
-        return "bg-green-100 text-green-700";
-      default:
-        return "bg-gray-100 text-gray-700";
-    }
-  };
-
-  const handleApproveTransfer = () => {
+  const handleApprove = () => {
     setShowProcessing(true);
-    setTimeout(() => {
-      setShowProcessing(false);
-      setSelectedAlert(null);
-    }, 2000);
+    setOpenSolution(null);
+    setTimeout(() => setShowProcessing(false), 2500);
   };
 
   const filteredData = inventoryData.filter((item) => {
-    const matchCategory =
+    const matchCat =
       selectedCategory === "All Categories" ||
       item.category === selectedCategory.toLowerCase();
     const matchSearch =
       searchQuery === "" ||
       item.name.toLowerCase().includes(searchQuery.toLowerCase());
-    return matchCategory && matchSearch;
+    return matchCat && matchSearch;
   });
 
   return (
     <Layout>
       <div className="p-8 space-y-6">
-        {/* Header Section */}
+        {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-foreground">Manajemen Stok</h1>
           <p className="text-sm text-white mt-1">
@@ -157,58 +232,57 @@ export default function InventoryManagement() {
           </p>
         </div>
 
-        {/* Filters Section */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-border">
-          <div className="flex items-center gap-4 mb-6">
-            {/* Filter Dropdowns */}
-            <div className="flex gap-4">
-              <button className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">
-                All Warehouses
-                <ChevronDown className="w-4 h-4" />
-              </button>
+        {/* ─── Filter Section ─── */}
+        <div className="bg-white rounded-2xl p-5 shadow-sm border border-border">
+          <h2 className="text-sm font-semibold text-muted-foreground mb-4 uppercase tracking-wide">
+            Filter Produk
+          </h2>
+          <div className="flex items-center gap-4 flex-wrap">
+            <button className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors">
+              All Warehouses <ChevronDown className="w-4 h-4" />
+            </button>
 
-              {/* Category Dropdown */}
-              <div className="relative">
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="appearance-none flex items-center gap-2 px-4 py-2 pr-8 bg-background border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {categories.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {cat}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none text-foreground" />
-              </div>
-
-              <button className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">
-                All Statuses
-                <ChevronDown className="w-4 h-4" />
-              </button>
+            <div className="relative">
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="appearance-none px-4 py-2 pr-8 bg-background border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
             </div>
 
-            {/* Search */}
-            <div className="ml-auto">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search Product Name..."
-                  className="pl-10"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </div>
+            <button className="flex items-center gap-2 px-4 py-2 bg-background border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors">
+              All Statuses <ChevronDown className="w-4 h-4" />
+            </button>
+
+            <div className="ml-auto relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search Product Name..."
+                className="pl-10 w-64"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
             </div>
           </div>
+        </div>
 
-          {/* Inventory Table */}
+        {/* ─── Product Catalog / Table ─── */}
+        <div className="bg-white rounded-2xl shadow-sm border border-border overflow-hidden">
+          <div className="px-6 py-4 border-b border-border">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              Katalog Produk
+            </h2>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-3 px-4 font-semibold text-foreground">Product Name</th>
+                <tr className="border-b border-border bg-muted/30">
+                  <th className="text-left py-3 px-5 font-semibold text-foreground">Product Name</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Current Stock</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Predicted Demand (4 days)</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Harga</th>
@@ -216,157 +290,83 @@ export default function InventoryManagement() {
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Expiry Date</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Status</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground">Recommended Action</th>
+                  <th className="text-center py-3 px-4 font-semibold text-foreground">Solution</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredData.map((item) => (
-                  <tr
-                    key={item.id}
-                    className={cn(
-                      "border-b border-border hover:bg-muted/50 transition-colors",
-                      selectedAlert === item.id && "bg-orange-50"
-                    )}
-                  >
-                    <td className="py-4 px-4">
-                      <p className="font-semibold text-foreground">{item.name}</p>
-                    </td>
-                    <td className="py-4 px-4">
-                      <p className="font-bold text-foreground">{item.currentStock}</p>
-                    </td>
-                    <td className="py-4 px-4">
-                      <p className="text-foreground">{item.predictedDemand}</p>
-                      {item.predictedDemandShort && (
-                        <p className="text-xs text-red-600">{item.predictedDemandShort}</p>
+                  <>
+                    <tr
+                      key={item.id}
+                      className={cn(
+                        "border-b border-border hover:bg-muted/40 transition-colors",
+                        openSolution === item.id && "bg-orange-50"
                       )}
-                    </td>
-                    <td className="py-4 px-4">
-                      <p className="text-foreground">{item.harga}</p>
-                    </td>
-                    <td className="py-4 px-4">
-                      <p className="text-foreground">{item.berat}</p>
-                    </td>
-                    <td className="py-4 px-4">
-                      <p className="text-foreground">{item.expiryDate}</p>
-                    </td>
-                    <td className="py-4 px-4">
-                      <span
-                        className={cn(
+                    >
+                      <td className="py-4 px-5">
+                        <p className="font-semibold text-foreground">{item.name}</p>
+                      </td>
+                      <td className="py-4 px-4">
+                        <p className="font-bold text-foreground">{item.currentStock}</p>
+                      </td>
+                      <td className="py-4 px-4">
+                        <p className={cn(
+                          "font-medium",
+                          item.predictedDemandShort ? "text-red-600" : "text-foreground"
+                        )}>
+                          {item.predictedDemand}
+                        </p>
+                        {item.predictedDemandShort && (
+                          <p className="text-xs text-red-500">{item.predictedDemandShort}</p>
+                        )}
+                      </td>
+                      <td className="py-4 px-4 text-foreground">{item.harga}</td>
+                      <td className="py-4 px-4 text-foreground">{item.berat}</td>
+                      <td className="py-4 px-4 text-foreground">{item.expiryDate}</td>
+                      <td className="py-4 px-4">
+                        <span className={cn(
                           "inline-block px-3 py-1 rounded-full text-xs font-semibold",
                           getStatusColor(item.status)
-                        )}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4">
-                      <div className="flex items-center gap-2">
-                        <span className="text-foreground">{item.recommendedAction}</span>
-                        {item.status === "Critical" && (
-                          <Button
-                            size="sm"
-                            className="bg-orange-500 hover:bg-orange-600 text-white ml-2"
-                            onClick={() => setSelectedAlert(item.id)}
-                          >
-                            View Solution
-                          </Button>
-                        )}
-                        {item.status !== "Critical" && (
-                          <button className="text-primary text-xs font-medium hover:underline">
-                            View Solution
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
+                        )}>
+                          {item.status}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-foreground">{item.recommendedAction}</td>
+                      <td className="py-4 px-4 text-center">
+                        <Button
+                          size="sm"
+                          className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 px-4 min-w-[120px]"
+                          onClick={() =>
+                            setOpenSolution(openSolution === item.id ? null : item.id)
+                          }
+                        >
+                          {openSolution === item.id ? "Close Solution" : "View Solution"}
+                        </Button>
+                      </td>
+                    </tr>
+
+                    {/* Inline AI Recommendation */}
+                    {openSolution === item.id && (
+                      <AIRecommendationPanel
+                        key={`ai-${item.id}`}
+                        item={item}
+                        onApprove={handleApprove}
+                        onClose={() => setOpenSolution(null)}
+                      />
+                    )}
+                  </>
                 ))}
               </tbody>
             </table>
           </div>
-
-          <p className="text-xs text-muted-foreground mt-4">
-            Showing {filteredData.length} of {inventoryData.length} items
-          </p>
+          <div className="px-6 py-3 border-t border-border">
+            <p className="text-xs text-muted-foreground">
+              Showing {filteredData.length} of {inventoryData.length} items
+            </p>
+          </div>
         </div>
 
-        {/* AI Recommendation Section */}
-        {selectedAlert && (
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-border">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-purple-200 rounded-full flex items-center justify-center">
-                <span className="text-purple-700 font-bold text-sm">AI</span>
-              </div>
-              <h2 className="text-lg font-bold text-foreground">AI Recommendation</h2>
-            </div>
-
-            <div className="space-y-4">
-              {/* Transfer Stock Option */}
-              <div className="border-2 border-orange-400 rounded-xl p-6 bg-orange-50 relative">
-                <div className="absolute -top-3 left-6 bg-orange-500 text-white text-xs font-bold px-3 py-1 rounded-full">
-                  BEST OPTION
-                </div>
-                <div className="flex gap-6">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-orange-200 rounded-full flex items-center justify-center">
-                        <TrendingUp className="w-6 h-6 text-orange-600" />
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-foreground">Transfer Stock</h3>
-                        <p className="text-sm text-muted-foreground">From Jakarta Hub</p>
-                      </div>
-                    </div>
-                    <p className="text-sm text-foreground mb-3">
-                      Sufficient overstock available in Jakarta Hub. Transit time in 2 days, matching impending demand spike exactly.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-3xl font-bold text-orange-600">500 units</p>
-                    <p className="text-sm text-muted-foreground">Save Rp 1.500.000</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Order from Supplier Option */}
-              <div className="border border-border rounded-xl p-6">
-                <div className="flex gap-6">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3 mb-4">
-                      <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                        <span className="text-gray-600 font-bold">📦</span>
-                      </div>
-                      <div>
-                        <h3 className="font-bold text-foreground">Order from Supplier</h3>
-                        <p className="text-sm text-muted-foreground">Indostationery Ltd.</p>
-                      </div>
-                    </div>
-                    <p className="text-sm text-foreground">
-                      Lead time is 4 days. Stockout risk before delivery. Uses additional capital.
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-3xl font-bold text-foreground">Rp 1.000.000</p>
-                    <p className="text-sm text-muted-foreground">inc. 7.000/unit</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex gap-3 mt-6 pt-6 border-t border-border">
-              <button className="ml-auto px-4 py-2 bg-white border border-border rounded-lg text-sm font-medium text-foreground hover:bg-muted transition-colors">
-                Order from Supplier
-              </button>
-              <Button
-                className="bg-orange-500 hover:bg-orange-600 text-white"
-                onClick={handleApproveTransfer}
-              >
-                ✓ Approve Transfer
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Processing Notification */}
+        {/* Processing Toast */}
         {showProcessing && (
           <div className="fixed bottom-8 right-8 bg-gray-900 text-white rounded-lg px-6 py-4 shadow-lg flex items-center gap-3 z-50">
             <div className="w-4 h-4 bg-orange-500 rounded-full animate-pulse" />
