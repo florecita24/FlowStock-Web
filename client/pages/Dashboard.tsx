@@ -1,9 +1,9 @@
-import { useState, lazy, Suspense } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   DollarSign, AlertTriangle, Box, TrendingUp,
-  AlertCircle, CheckCircle2, Clock,
+  AlertCircle, CheckCircle2, Clock, BarChart2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,32 @@ import {
 import Layout from "@/components/Layout";
 
 const IndonesiaMap = lazy(() => import("@/components/IndonesiaMap"));
+
+const BACKEND_URL = "http://127.0.0.1:8000";
+
+interface MetricEntry {
+  model: string;
+  date: string;
+  metrics: {
+    mae: number; rmse: number; r2: number; mape: number; smape: number;
+  };
+}
+
+function modelBadgeColor(model: string) {
+  const m = model.toLowerCase();
+  if (m === "xgboost") return "bg-orange-100 text-orange-700";
+  if (m === "prophet") return "bg-blue-100 text-blue-700";
+  if (m === "sarima")  return "bg-purple-100 text-purple-700";
+  if (m === "lstm")    return "bg-pink-100 text-pink-700";
+  if (m === "mlp")     return "bg-green-100 text-green-700";
+  return "bg-gray-100 text-gray-700";
+}
+
+function r2Color(r2: number) {
+  if (r2 >= 0.75) return "text-green-600 font-bold";
+  if (r2 >= 0.5)  return "text-orange-500 font-bold";
+  return "text-red-500 font-bold";
+}
 
 const statCards = [
   {
@@ -117,6 +143,14 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [viewAllOpen, setViewAllOpen] = useState(false);
+  const [metricsData, setMetricsData] = useState<MetricEntry[]>([]);
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/forecast/metrics`)
+      .then((r) => r.json())
+      .then((data: MetricEntry[]) => setMetricsData(Array.isArray(data) ? data : []))
+      .catch(() => { /* backend offline – silently skip */ });
+  }, []);
 
   const handleConfirmTransfer = () => {
     setTransferDialogOpen(false);
@@ -255,6 +289,54 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* ── Model Performance Comparison ── */}
+        {metricsData.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-border overflow-hidden">
+            <div className="px-6 py-4 border-b border-border flex items-center gap-2">
+              <BarChart2 className="w-4 h-4 text-primary" />
+              <h2 className="text-sm font-bold text-foreground uppercase tracking-wide">Recent Model Performance</h2>
+              <span className="ml-auto text-xs text-muted-foreground">Last {metricsData.length} runs</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left py-3 px-5 font-semibold text-foreground whitespace-nowrap">Model</th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Date</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground whitespace-nowrap">MAE ↓</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground whitespace-nowrap">RMSE ↓</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground whitespace-nowrap">MAPE ↓</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground whitespace-nowrap">sMAPE ↓</th>
+                    <th className="text-right py-3 px-4 font-semibold text-foreground whitespace-nowrap">R² ↑</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metricsData.map((entry, i) => (
+                    <tr key={i} className="border-b border-border hover:bg-muted/40 transition-colors">
+                      <td className="py-3 px-5">
+                        <span className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-bold uppercase ${modelBadgeColor(entry.model)}`}>
+                          {entry.model}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-muted-foreground whitespace-nowrap">
+                        {new Date(entry.date).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono text-foreground">{entry.metrics.mae.toFixed(2)}</td>
+                      <td className="py-3 px-4 text-right font-mono text-foreground">{entry.metrics.rmse.toFixed(2)}</td>
+                      <td className="py-3 px-4 text-right font-mono text-foreground">{(entry.metrics.mape * 100).toFixed(1)}%</td>
+                      <td className="py-3 px-4 text-right font-mono text-foreground">{(entry.metrics.smape * 100).toFixed(1)}%</td>
+                      <td className={`py-3 px-4 text-right font-mono ${r2Color(entry.metrics.r2)}`}>{entry.metrics.r2.toFixed(3)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-6 py-3 border-t border-border">
+              <p className="text-xs text-muted-foreground">↓ Lower is better &nbsp;·&nbsp; ↑ Higher is better &nbsp;·&nbsp; R² ≥ 0.75 = <span className="text-green-600 font-semibold">Good</span></p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Execute Transfer Dialog ── */}
