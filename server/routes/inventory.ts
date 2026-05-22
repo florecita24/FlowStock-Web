@@ -8,7 +8,7 @@ const FLOWSTOCK_AI_BASE_URL =
 async function syncInventoryWithFlowStockAI() {
   const url = `${FLOWSTOCK_AI_BASE_URL.replace(/\/$/, "")}/api/sync-inventory`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
   try {
     const response = await fetch(url, {
@@ -26,7 +26,12 @@ async function syncInventoryWithFlowStockAI() {
       );
     }
   } catch (error) {
-    console.warn("FlowStock AI sync unavailable:", error);
+    if (error instanceof DOMException && error.name === "AbortError") {
+      console.warn("FlowStock AI sync timed out after 8s; continuing with cached inventory data.");
+      return;
+    }
+
+    console.warn("FlowStock AI sync unavailable:", error instanceof Error ? error.message : String(error));
   } finally {
     clearTimeout(timeoutId);
   }
@@ -34,7 +39,7 @@ async function syncInventoryWithFlowStockAI() {
 
 export const getInventory: RequestHandler = async (req, res) => {
   try {
-    await syncInventoryWithFlowStockAI();
+    void syncInventoryWithFlowStockAI();
 
     const { data, error, count } = await supabase
       .from("inventory")
