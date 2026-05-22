@@ -91,9 +91,11 @@ export const getWeeklySalesByProduct: RequestHandler = async (req, res) => {
       from += pageSize;
     }
 
-    // Aggregate into a weekly bucket per (month, weekOfMonth)
-    // Returns shape: { "0-0": 1234, "0-1": 5678, ... } where key = `${month}-${weekIdx}` (0-indexed)
-    const buckets: Record<string, number> = {};
+    // Aggregate into both weekly buckets (for "All months" view) and daily buckets (for specific month)
+    // weekly key = `${month}-${weekIdx}` (0-indexed)
+    // daily key  = `${month}-${day}` (day is 1-31)
+    const weeklyBuckets: Record<string, number> = {};
+    const dailyBuckets: Record<string, number> = {};
 
     for (const row of allRows) {
       const d = new Date(row.date);
@@ -101,15 +103,20 @@ export const getWeeklySalesByProduct: RequestHandler = async (req, res) => {
       const month = d.getMonth();
       const day = d.getDate();
       const weekIdx = Math.min(3, Math.floor((day - 1) / 7));
-      const key = `${month}-${weekIdx}`;
-      buckets[key] = (buckets[key] || 0) + (row.sales || 0);
+
+      const weeklyKey = `${month}-${weekIdx}`;
+      weeklyBuckets[weeklyKey] = (weeklyBuckets[weeklyKey] || 0) + (row.sales || 0);
+
+      const dailyKey = `${month}-${day}`;
+      dailyBuckets[dailyKey] = (dailyBuckets[dailyKey] || 0) + (row.sales || 0);
     }
 
     res.status(200).json({
       productId: productIdNum,
       year,
       totalRows: allRows.length,
-      weeklyBuckets: buckets,
+      weeklyBuckets,
+      dailyBuckets,
     });
   } catch (err) {
     console.error("Error fetching weekly sales:", err);

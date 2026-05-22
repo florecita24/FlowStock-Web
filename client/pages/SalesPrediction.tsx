@@ -4,7 +4,7 @@ import Layout from "@/components/Layout";
 import { Lightbulb } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Label,
+  Tooltip, ResponsiveContainer, Label,
 } from "recharts";
 import type { ListResponse, Product } from "@shared/api";
 
@@ -13,62 +13,101 @@ interface WeeklySalesResponse {
   year: number;
   totalRows: number;
   weeklyBuckets: Record<string, number>; // key: "month-weekIdx"
+  dailyBuckets: Record<string, number>;  // key: "month-day" (day = 1-31)
 }
 
-// Simulated "current year" — dataset covers 2013-2018, treating 2018 as today
-const CURRENT_YEAR = 2018;
+// Days in each month (non-leap year, since 2017 & 2018 are not leap years)
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-interface QuarterDef {
-  label: string;
-  months: number[]; // 0-indexed (Jan = 0)
-}
-
-const QUARTERS: QuarterDef[] = [
-  { label: "Q1 (Jan - Mar)",  months: [0, 1, 2] },
-  { label: "Q2 (Apr - Jun)",  months: [3, 4, 5] },
-  { label: "Q3 (Jul - Sept)", months: [6, 7, 8] },
-  { label: "Q4 (Oct - Des)",  months: [9, 10, 11] },
-];
+// Historical year (real data from DB) vs predicted year (from AI model)
+const HISTORICAL_YEAR = 2017;
+const PREDICTED_YEAR = 2018;
 
 const MONTH_SHORT = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-function buildQuarterWeekLabels(quarterLabel: string): string[] {
-  const q = QUARTERS.find((x) => x.label === quarterLabel) ?? QUARTERS[0];
-  const labels: string[] = [];
-  q.months.forEach((m) => {
-    for (let w = 1; w <= 4; w++) labels.push(`${MONTH_SHORT[m]} W${w}`);
-  });
-  return labels;
+const MONTH_OPTIONS = [
+  "All months",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+// Sum all weekly buckets for a single month
+function sumMonth(buckets: Record<string, number>, month: number): number {
+  let total = 0;
+  for (let w = 0; w < 4; w++) total += buckets[`${month}-${w}`] || 0;
+  return total;
 }
 
-// Build 12 weekly values for a given quarter from pre-aggregated buckets returned by server
-function buildQuarterValues(
-  buckets: Record<string, number>,
-  quarterLabel: string
-): number[] {
-  const q = QUARTERS.find((x) => x.label === quarterLabel) ?? QUARTERS[0];
-  const values: number[] = [];
-  q.months.forEach((month) => {
-    for (let weekIdx = 0; weekIdx < 4; weekIdx++) {
-      values.push(buckets[`${month}-${weekIdx}`] || 0);
-    }
-  });
-  return values;
+interface ChartPoint {
+  label: string;
+  historical: number;
+  projection: number;
 }
 
-const CUTOFF = 6;
+function buildChartData(
+  histWeekly: Record<string, number>,
+  predWeekly: Record<string, number>,
+  histDaily: Record<string, number>,
+  predDaily: Record<string, number>,
+  monthLabel: string
+): ChartPoint[] {
+  // "All months" → 12 monthly aggregated points (from weekly buckets)
+  if (monthLabel === "All months") {
+    return MONTH_SHORT.map((m, i) => ({
+      label: m,
+      historical: sumMonth(histWeekly, i),
+      projection: sumMonth(predWeekly, i),
+    }));
+  }
+
+  // Specific month → daily points (1, 2, ..., 28/30/31)
+  const monthIdx = MONTH_OPTIONS.indexOf(monthLabel) - 1; // -1 because "All months" is at index 0
+  if (monthIdx < 0 || monthIdx > 11) return [];
+
+  const daysInMonth = DAYS_IN_MONTH[monthIdx];
+  const points: ChartPoint[] = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    points.push({
+      label: String(day),
+      historical: histDaily[`${monthIdx}-${day}`] || 0,
+      projection: predDaily[`${monthIdx}-${day}`] || 0,
+    });
+  }
+  return points;
+}
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
-  const val = payload[0]?.value ?? payload[1]?.value;
-  const isP = payload[0]?.name === "projection";
   return (
     <div className="bg-gray-900 text-white rounded-xl px-4 py-3 shadow-xl text-sm">
-      <p className="text-gray-300 font-medium">{label} {isP ? "(Projection)" : "(Historical)"}</p>
-      <p className="text-green-400 font-bold text-base mt-0.5">{val?.toLocaleString()} units</p>
+      <p className="text-gray-300 font-medium mb-1">{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.dataKey} className="font-semibold text-base">
+          <span
+            className="inline-block w-2 h-2 rounded-full mr-2"
+            style={{ background: p.color }}
+          />
+          {p.dataKey === "historical"
+            ? `${HISTORICAL_YEAR}: `
+            : `${PREDICTED_YEAR} (AI): `}
+          <span style={{ color: p.color }}>
+            {p.value?.toLocaleString()} units
+          </span>
+        </p>
+      ))}
     </div>
   );
 };
@@ -78,11 +117,14 @@ export default function SalesPrediction() {
   const initialProduct = (location.state as any)?.selectedProduct ?? "";
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [weeklyBuckets, setWeeklyBuckets] = useState<Record<string, number>>({});
+  const [histWeekly, setHistWeekly] = useState<Record<string, number>>({});
+  const [predWeekly, setPredWeekly] = useState<Record<string, number>>({});
+  const [histDaily, setHistDaily] = useState<Record<string, number>>({});
+  const [predDaily, setPredDaily] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(false);
   const [selectedProductName, setSelectedProductName] = useState<string>(initialProduct);
-  const [variables, setVariables] = useState({ kuartal: "Q1 (Jan - Mar)", marketing: "Payday Sale" });
+  const [selectedMonth, setSelectedMonth] = useState<string>("All months");
 
   // Fetch products list once
   useEffect(() => {
@@ -115,21 +157,33 @@ export default function SalesPrediction() {
     [products, selectedProductName]
   );
 
-  // Fetch weekly aggregated sales whenever selected product changes
+  // Fetch both historical and predicted year buckets in parallel when product changes
   useEffect(() => {
     if (!selectedProduct) return;
     let cancelled = false;
     async function fetchWeekly() {
       try {
         setChartLoading(true);
-        const res = await fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${CURRENT_YEAR}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json: WeeklySalesResponse = await res.json();
+        const [histRes, predRes] = await Promise.all([
+          fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${HISTORICAL_YEAR}`),
+          fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${PREDICTED_YEAR}`),
+        ]);
+        if (!histRes.ok || !predRes.ok) throw new Error("Failed to fetch weekly sales");
+        const histJson: WeeklySalesResponse = await histRes.json();
+        const predJson: WeeklySalesResponse = await predRes.json();
         if (cancelled) return;
-        setWeeklyBuckets(json.weeklyBuckets || {});
+        setHistWeekly(histJson.weeklyBuckets || {});
+        setPredWeekly(predJson.weeklyBuckets || {});
+        setHistDaily(histJson.dailyBuckets || {});
+        setPredDaily(predJson.dailyBuckets || {});
       } catch (err) {
         console.error("Weekly sales fetch error:", err);
-        if (!cancelled) setWeeklyBuckets({});
+        if (!cancelled) {
+          setHistWeekly({});
+          setPredWeekly({});
+          setHistDaily({});
+          setPredDaily({});
+        }
       } finally {
         if (!cancelled) setChartLoading(false);
       }
@@ -140,28 +194,31 @@ export default function SalesPrediction() {
     };
   }, [selectedProduct?.id]);
 
-  const weekLabels = useMemo(
-    () => buildQuarterWeekLabels(variables.kuartal),
-    [variables.kuartal]
-  );
-
-  const values = useMemo(
-    () => buildQuarterValues(weeklyBuckets, variables.kuartal),
-    [weeklyBuckets, variables.kuartal]
-  );
-
   const chartData = useMemo(
-    () =>
-      values.map((val, i) => ({
-        week: weekLabels[i],
-        historical: i < CUTOFF ? val : undefined,
-        projection: i >= CUTOFF - 1 ? val : undefined,
-      })),
-    [values, weekLabels]
+    () => buildChartData(histWeekly, predWeekly, histDaily, predDaily, selectedMonth),
+    [histWeekly, predWeekly, histDaily, predDaily, selectedMonth]
   );
 
-  const maxVal = values.length ? Math.max(...values) : 0;
-  const peakIdx = values.indexOf(maxVal);
+  // Peak (combined max across both lines)
+  const peakInfo = useMemo(() => {
+    if (chartData.length === 0) return null;
+    let maxVal = 0;
+    let peakLabel = "";
+    let peakSeries: "historical" | "projection" = "historical";
+    chartData.forEach((d) => {
+      if (d.historical > maxVal) {
+        maxVal = d.historical;
+        peakLabel = d.label;
+        peakSeries = "historical";
+      }
+      if (d.projection > maxVal) {
+        maxVal = d.projection;
+        peakLabel = d.label;
+        peakSeries = "projection";
+      }
+    });
+    return maxVal > 0 ? { maxVal, peakLabel, peakSeries } : null;
+  }, [chartData]);
 
   return (
     <Layout>
@@ -187,36 +244,25 @@ export default function SalesPrediction() {
 
             <div className="space-y-5 flex-1">
               <div>
-                <label className="block text-sm font-semibold text-foreground mb-2">Quarter</label>
+                <label className="block text-sm font-semibold text-foreground mb-2">Month</label>
                 <select
-                  value={variables.kuartal}
-                  onChange={(e) => setVariables({ ...variables, kuartal: e.target.value })}
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
                   className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 >
-                  {QUARTERS.map((q) => (
-                    <option key={q.label}>{q.label}</option>
+                  {MONTH_OPTIONS.map((m) => (
+                    <option key={m}>{m}</option>
                   ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold text-foreground mb-2">
-                  Marketing Campaign
-                </label>
-                <select
-                  value={variables.marketing}
-                  onChange={(e) => setVariables({ ...variables, marketing: e.target.value })}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option>Payday Sale</option>
-                  <option>Flash Sale</option>
                 </select>
               </div>
 
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-xs text-muted-foreground flex gap-2">
                   <span className="text-primary font-bold">ℹ️</span>
-                  <span>Model adjusts prediction dynamically based on historical mapping of selected variables.</span>
+                  <span>
+                    Comparing {HISTORICAL_YEAR} (historical) with {PREDICTED_YEAR} (AI projection).
+                    Marketing campaign effects are baked into the trained model.
+                  </span>
                 </p>
               </div>
             </div>
@@ -226,7 +272,7 @@ export default function SalesPrediction() {
           <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-border">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-lg font-bold text-foreground">
-                Sales Projection — {variables.kuartal} {CURRENT_YEAR}
+                Sales Projection — {selectedMonth}
                 {chartLoading && (
                   <span className="ml-2 text-xs font-normal text-muted-foreground">
                     Loading...
@@ -247,11 +293,15 @@ export default function SalesPrediction() {
             <div className="flex items-center gap-6 mb-4 mt-2">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-0.5 bg-blue-500" />
-                <span className="text-xs text-muted-foreground">Historical Data</span>
+                <span className="text-xs text-muted-foreground">
+                  Historical Data ({HISTORICAL_YEAR})
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-8 h-0 border-t-2 border-dashed border-green-500" />
-                <span className="text-xs text-muted-foreground">AI Projection</span>
+                <span className="text-xs text-muted-foreground">
+                  AI Projection ({PREDICTED_YEAR})
+                </span>
               </div>
             </div>
 
@@ -260,19 +310,19 @@ export default function SalesPrediction() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
 
                 <XAxis
-                  dataKey="week"
+                  dataKey="label"
                   tick={{ fontSize: 11, fill: "#9ca3af" }}
                   axisLine={false}
                   tickLine={false}
                   interval={0}
-                  angle={-35}
-                  textAnchor="end"
-                  height={65}
+                  angle={selectedMonth === "All months" ? 0 : -35}
+                  textAnchor={selectedMonth === "All months" ? "middle" : "end"}
+                  height={selectedMonth === "All months" ? 40 : 65}
                 >
                   <Label
-                    value="Week"
+                    value={selectedMonth === "All months" ? "Month" : "Day"}
                     position="insideBottom"
-                    offset={-32}
+                    offset={selectedMonth === "All months" ? -8 : -32}
                     style={{ fontSize: 12, fill: "#6b7280", fontWeight: 600 }}
                   />
                 </XAxis>
@@ -295,13 +345,6 @@ export default function SalesPrediction() {
 
                 <Tooltip content={<CustomTooltip />} />
 
-                <ReferenceLine
-                  x={weekLabels[CUTOFF - 1]}
-                  stroke="#d1d5db"
-                  strokeDasharray="4 4"
-                  label={{ value: "Today", position: "top", fontSize: 11, fill: "#6b7280" }}
-                />
-
                 <Line type="monotone" dataKey="historical" stroke="#3b82f6" strokeWidth={3}
                   dot={false} activeDot={{ r: 6, fill: "#3b82f6" }} connectNulls={false} />
                 <Line type="monotone" dataKey="projection" stroke="#10b981" strokeWidth={2.5}
@@ -309,11 +352,32 @@ export default function SalesPrediction() {
               </LineChart>
             </ResponsiveContainer>
 
-            {peakIdx >= 0 && maxVal > 0 && (
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-muted-foreground">Peak:</span>
-                <span className="text-xs font-semibold text-green-600">
-                  {weekLabels[peakIdx]} — {maxVal.toLocaleString()} units
+            {peakInfo && (
+              <div className="flex items-center gap-2 mt-1 flex-wrap">
+                <span className="text-xs text-muted-foreground">Highest sales:</span>
+                <span
+                  className={`text-xs font-semibold ${
+                    peakInfo.peakSeries === "historical" ? "text-blue-600" : "text-green-600"
+                  }`}
+                >
+                  {peakInfo.maxVal.toLocaleString()} units
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  on{" "}
+                  <span className="font-semibold text-foreground">
+                    {selectedMonth === "All months"
+                      ? `${peakInfo.peakLabel} ${
+                          peakInfo.peakSeries === "historical"
+                            ? HISTORICAL_YEAR
+                            : PREDICTED_YEAR
+                        }`
+                      : `${selectedMonth} ${peakInfo.peakLabel}, ${
+                          peakInfo.peakSeries === "historical"
+                            ? HISTORICAL_YEAR
+                            : PREDICTED_YEAR
+                        }`}
+                  </span>{" "}
+                  ({peakInfo.peakSeries === "historical" ? "Historical" : "AI Projection"})
                 </span>
               </div>
             )}
@@ -329,14 +393,15 @@ export default function SalesPrediction() {
             <div className="flex-1">
               <h3 className="font-bold text-foreground mb-2">AI Insight</h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Applying{" "}
-                <span className="font-semibold text-foreground">"{variables.marketing}"</span>{" "}
-                in the{" "}
-                <span className="font-semibold text-foreground">{variables.kuartal}</span>{" "}
-                quarter translates to an average demand increase of{" "}
-                <span className="font-bold text-primary">35%</span>. Increase buffer stock
-                before <span className="font-semibold">Week 5</span> to avoid stockout risk
-                in High-Demand product categories.
+                Comparing actual {HISTORICAL_YEAR} sales with the {PREDICTED_YEAR} AI projection
+                for{" "}
+                <span className="font-semibold text-foreground">
+                  {selectedProductName || "selected product"}
+                </span>{" "}
+                in{" "}
+                <span className="font-semibold text-foreground">{selectedMonth}</span>.
+                Marketing campaign uplift, seasonality, and promotional effects are computed
+                inside the trained forecasting model.
               </p>
             </div>
           </div>
