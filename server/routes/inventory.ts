@@ -37,10 +37,21 @@ async function syncInventoryWithFlowStockAI() {
   }
 }
 
+export const syncInventory: RequestHandler = async (_req, res) => {
+  try {
+    await syncInventoryWithFlowStockAI();
+    return res.status(202).json({
+      status: "accepted",
+      message: "Inventory sync started.",
+    });
+  } catch (err) {
+    console.error("Error starting inventory sync:", err);
+    return res.status(500).json({ error: String(err) });
+  }
+};
+
 export const getInventory: RequestHandler = async (req, res) => {
   try {
-    void syncInventoryWithFlowStockAI();
-
     const { data, error, count } = await supabase
       .from("inventory")
       .select(

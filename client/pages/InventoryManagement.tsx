@@ -266,31 +266,59 @@ export default function InventoryManagement() {
   const [inventoryData, setInventoryData] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const fetchInventory = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch("/api/inventory");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json: ListResponse<Inventory> = await res.json();
+      setInventoryData(json.data.map(mapInventoryRow));
+      setFetchError(null);
+    } catch (err) {
+      console.error("Failed to fetch inventory:", err);
+      setFetchError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
-    async function fetchInventory() {
-      try {
-        setLoading(true);
-        const res = await fetch("/api/inventory");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json: ListResponse<Inventory> = await res.json();
-        if (cancelled) return;
-        setInventoryData(json.data.map(mapInventoryRow));
-        setFetchError(null);
-      } catch (err) {
-        if (cancelled) return;
-        console.error("Failed to fetch inventory:", err);
-        setFetchError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
-    fetchInventory();
+    fetchInventory().finally(() => {
+      if (cancelled) return;
+    });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const handleSyncInventory = async () => {
+    try {
+      setSyncing(true);
+      const syncRes = await fetch("/api/inventory/sync", { method: "POST" });
+      if (!syncRes.ok) throw new Error(`HTTP ${syncRes.status}`);
+
+      toast.info("AI sync started", {
+        description: "Waiting for Supabase inventory to refresh...",
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 12000));
+      await fetchInventory();
+
+      toast.success("Inventory refreshed", {
+        description: "The web table now reflects the latest Supabase data.",
+      });
+    } catch (err) {
+      console.error("Failed to sync inventory:", err);
+      toast.error("Sync failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const warehouseOptions = useMemo(() => {
     const set = new Set<string>();
@@ -354,6 +382,15 @@ export default function InventoryManagement() {
           <p className="text-sm text-white mt-1">
             Manage inventory levels, respond to alerts, and execute transfers.
           </p>
+          <div className="mt-4">
+            <Button
+              onClick={handleSyncInventory}
+              disabled={loading || syncing}
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+            >
+              {syncing ? "Syncing AI Data..." : "Sync AI Data & Refresh Table"}
+            </Button>
+          </div>
         </div>
 
         {/* ── Filter Section ── */}

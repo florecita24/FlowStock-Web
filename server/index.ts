@@ -14,6 +14,7 @@ import {
   getInventory,
   getInventoryByWarehouse,
   getInventoryByProduct,
+  syncInventory,
 } from "./routes/inventory";
 import {
   getStoreSales,
@@ -48,6 +49,7 @@ export function createServer() {
 
   // Inventory routes
   app.get("/api/inventory", getInventory);
+  app.post("/api/inventory/sync", syncInventory);
   app.get("/api/inventory/warehouse/:warehouseId", getInventoryByWarehouse);
   app.get("/api/inventory/product/:productId", getInventoryByProduct);
 
