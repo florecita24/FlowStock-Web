@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import Layout from "@/components/Layout";
@@ -7,78 +7,60 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Label,
 } from "recharts";
+import type { ListResponse, Product, StoreSales } from "@shared/api";
 
-const productList = [
-  "Pencil 2B", "Wireless Earbuds", "Tablet Cases", "A4 Paper Reams",
-  "Lipstick Matte", "Serum Vitamin C", "Kaos Polos", "Smart Watches", "Foundation",
+interface QuarterDef {
+  label: string;
+  months: number[]; // 0-indexed (Jan = 0)
+}
+
+const QUARTERS: QuarterDef[] = [
+  { label: "Jan - Mar",  months: [0, 1, 2] },
+  { label: "Apr - Jun",  months: [3, 4, 5] },
+  { label: "Jul - Sept", months: [6, 7, 8] },
+  { label: "Oct - Des",  months: [9, 10, 11] },
 ];
 
-const quarterWeekLabels: Record<string, string[]> = {
-  "Jan - Mar":  ["Jan W1","Jan W2","Jan W3","Jan W4","Feb W1","Feb W2","Feb W3","Feb W4","Mar W1","Mar W2","Mar W3","Mar W4"],
-  "Apr - Jun":  ["Apr W1","Apr W2","Apr W3","Apr W4","May W1","May W2","May W3","May W4","Jun W1","Jun W2","Jun W3","Jun W4"],
-  "Jul - Sept": ["Jul W1","Jul W2","Jul W3","Jul W4","Aug W1","Aug W2","Aug W3","Aug W4","Sep W1","Sep W2","Sep W3","Sep W4"],
-  "Oct - Des":  ["Oct W1","Oct W2","Oct W3","Oct W4","Nov W1","Nov W2","Nov W3","Nov W4","Dec W1","Dec W2","Dec W3","Dec W4"],
-};
+const MONTH_SHORT = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
 
-// Quarterly data — each quarter has distinct patterns per product
-const rawDataByQuarter: Record<string, Record<string, number[]>> = {
-  "Jan - Mar": {
-    "Pencil 2B":        [300, 320, 280, 350, 400, 380, 420, 450, 390, 360, 340, 310],
-    "Wireless Earbuds": [150, 180, 200, 190, 250, 300, 280, 350, 320, 280, 240, 210],
-    "Tablet Cases":     [ 80,  90,  85, 100, 120, 110, 130, 140, 120, 100,  95,  85],
-    "A4 Paper Reams":   [500, 520, 480, 550, 600, 580, 620, 650, 600, 550, 510, 490],
-    "Lipstick Matte":   [200, 220, 210, 240, 270, 260, 290, 310, 280, 250, 230, 215],
-    "Serum Vitamin C":  [120, 140, 130, 160, 200, 180, 220, 250, 210, 190, 165, 145],
-    "Kaos Polos":       [400, 380, 420, 450, 500, 470, 520, 560, 510, 480, 440, 410],
-    "Smart Watches":    [2500,2800,3200,3500,3800,4200,5200,6800,7500,7200,6500,5800],
-    "Foundation":       [180, 200, 195, 220, 250, 240, 265, 280, 260, 240, 220, 200],
-  },
-  "Apr - Jun": {
-    "Pencil 2B":        [290, 310, 330, 380, 420, 410, 460, 490, 440, 400, 370, 340],
-    "Wireless Earbuds": [180, 210, 230, 220, 290, 340, 320, 400, 370, 320, 280, 250],
-    "Tablet Cases":     [ 95, 105, 100, 120, 145, 130, 155, 165, 140, 120, 110, 100],
-    "A4 Paper Reams":   [480, 500, 460, 530, 580, 560, 600, 630, 580, 530, 490, 470],
-    "Lipstick Matte":   [260, 285, 270, 310, 350, 330, 380, 400, 360, 320, 300, 275],
-    "Serum Vitamin C":  [160, 185, 175, 205, 255, 235, 275, 305, 265, 240, 210, 185],
-    "Kaos Polos":       [520, 490, 550, 590, 650, 610, 670, 720, 660, 620, 570, 530],
-    "Smart Watches":    [3000,3400,3900,4200,4600,5100,6300,8200,9000,8700,7900,7000],
-    "Foundation":       [230, 255, 250, 285, 320, 310, 340, 360, 335, 310, 280, 255],
-  },
-  "Jul - Sept": {
-    "Pencil 2B":        [340, 370, 420, 480, 510, 490, 540, 570, 510, 470, 440, 400],
-    "Wireless Earbuds": [220, 255, 280, 265, 350, 410, 385, 480, 445, 385, 335, 300],
-    "Tablet Cases":     [115, 130, 125, 150, 180, 165, 195, 210, 175, 150, 140, 125],
-    "A4 Paper Reams":   [540, 565, 520, 595, 650, 630, 670, 710, 655, 595, 555, 530],
-    "Lipstick Matte":   [310, 340, 325, 370, 420, 395, 455, 475, 430, 380, 355, 325],
-    "Serum Vitamin C":  [200, 230, 220, 255, 320, 295, 345, 385, 335, 300, 265, 230],
-    "Kaos Polos":       [610, 575, 645, 685, 760, 715, 785, 840, 770, 720, 665, 615],
-    "Smart Watches":    [3500,3900,4500,4900,5400,5900,7300,9500,10500,10100,9200,8100],
-    "Foundation":       [275, 305, 295, 335, 375, 360, 395, 420, 390, 360, 325, 295],
-  },
-  "Oct - Des": {
-    "Pencil 2B":        [380, 420, 480, 560, 610, 580, 650, 720, 670, 620, 810, 950],
-    "Wireless Earbuds": [280, 325, 360, 340, 450, 530, 495, 620, 580, 500, 750, 980],
-    "Tablet Cases":     [145, 165, 160, 195, 235, 215, 255, 275, 230, 195, 310, 420],
-    "A4 Paper Reams":   [590, 615, 565, 645, 700, 680, 720, 760, 700, 640, 700, 760],
-    "Lipstick Matte":   [380, 420, 400, 460, 530, 500, 575, 605, 555, 490, 680, 820],
-    "Serum Vitamin C":  [250, 285, 270, 310, 385, 355, 415, 460, 400, 355, 470, 580],
-    "Kaos Polos":       [740, 695, 785, 830, 920, 865, 950, 1020, 940, 875, 1100, 1350],
-    "Smart Watches":    [4200,4800,5500,6000,6700,7200,8800,11500,12800,12300,15000,18500],
-    "Foundation":       [330, 370, 355, 405, 455, 435, 480, 510, 475, 435, 580, 720],
-  },
-};
+function buildQuarterWeekLabels(quarterLabel: string): string[] {
+  const q = QUARTERS.find((x) => x.label === quarterLabel) ?? QUARTERS[0];
+  const labels: string[] = [];
+  q.months.forEach((m) => {
+    for (let w = 1; w <= 4; w++) labels.push(`${MONTH_SHORT[m]} W${w}`);
+  });
+  return labels;
+}
+
+// Aggregate raw store_sales rows into 12 weekly buckets per quarter for a product
+function aggregateWeeklySales(
+  sales: StoreSales[],
+  productId: number,
+  quarterLabel: string
+): number[] {
+  const q = QUARTERS.find((x) => x.label === quarterLabel) ?? QUARTERS[0];
+  const buckets = Array(12).fill(0);
+
+  sales
+    .filter((s) => s.item === productId)
+    .forEach((s) => {
+      const d = new Date(s.date);
+      if (isNaN(d.getTime())) return;
+      const month = d.getMonth();
+      const monthIdx = q.months.indexOf(month);
+      if (monthIdx === -1) return;
+      const day = d.getDate();
+      const weekIdx = Math.min(3, Math.floor((day - 1) / 7));
+      buckets[monthIdx * 4 + weekIdx] += s.sales || 0;
+    });
+
+  return buckets;
+}
 
 const CUTOFF = 6;
-
-function buildData(product: string, quarter: string) {
-  const data   = rawDataByQuarter[quarter]?.[product] ?? rawDataByQuarter["Jan - Mar"]["Pencil 2B"];
-  const labels = quarterWeekLabels[quarter];
-  return data.map((val, i) => ({
-    week:       labels[i],
-    historical: i < CUTOFF      ? val : undefined,
-    projection: i >= CUTOFF - 1 ? val : undefined,
-  }));
-}
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
@@ -93,19 +75,72 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export default function SalesPrediction() {
-  const location       = useLocation();
-  const initialProduct = (location.state as any)?.selectedProduct ?? "Pencil 2B";
+  const location = useLocation();
+  const initialProduct = (location.state as any)?.selectedProduct ?? "";
 
-  const [selectedProduct, setSelectedProduct] = useState(
-    productList.includes(initialProduct) ? initialProduct : "Pencil 2B"
-  );
+  const [products, setProducts] = useState<Product[]>([]);
+  const [sales, setSales] = useState<StoreSales[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedProductName, setSelectedProductName] = useState<string>(initialProduct);
   const [variables, setVariables] = useState({ kuartal: "Jan - Mar", marketing: "Payday Sale" });
 
-  const chartData  = buildData(selectedProduct, variables.kuartal);
-  const weekLabels = quarterWeekLabels[variables.kuartal];
-  const values     = rawDataByQuarter[variables.kuartal]?.[selectedProduct] ?? [];
-  const maxVal     = values.length ? Math.max(...values) : 0;
-  const peakIdx    = values.indexOf(maxVal);
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchData() {
+      try {
+        const [pRes, sRes] = await Promise.all([
+          fetch("/api/products"),
+          fetch("/api/store-sales"),
+        ]);
+        if (!pRes.ok || !sRes.ok) throw new Error("Failed to fetch sales data");
+        const pJson: ListResponse<Product> = await pRes.json();
+        const sJson: ListResponse<StoreSales> = await sRes.json();
+        if (cancelled) return;
+        setProducts(pJson.data);
+        setSales(sJson.data);
+        if (!selectedProductName && pJson.data[0]) {
+          setSelectedProductName(pJson.data[0].name);
+        }
+      } catch (err) {
+        console.error("SalesPrediction fetch error:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const productList = useMemo(() => products.map((p) => p.name), [products]);
+  const selectedProduct = useMemo(
+    () => products.find((p) => p.name === selectedProductName),
+    [products, selectedProductName]
+  );
+
+  const weekLabels = useMemo(
+    () => buildQuarterWeekLabels(variables.kuartal),
+    [variables.kuartal]
+  );
+
+  const values = useMemo(() => {
+    if (!selectedProduct) return [];
+    return aggregateWeeklySales(sales, selectedProduct.id, variables.kuartal);
+  }, [sales, selectedProduct, variables.kuartal]);
+
+  const chartData = useMemo(
+    () =>
+      values.map((val, i) => ({
+        week: weekLabels[i],
+        historical: i < CUTOFF ? val : undefined,
+        projection: i >= CUTOFF - 1 ? val : undefined,
+      })),
+    [values, weekLabels]
+  );
+
+  const maxVal = values.length ? Math.max(...values) : 0;
+  const peakIdx = values.indexOf(maxVal);
 
   return (
     <Layout>
@@ -137,10 +172,9 @@ export default function SalesPrediction() {
                   onChange={(e) => setVariables({ ...variables, kuartal: e.target.value })}
                   className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 >
-                  <option>Jan - Mar</option>
-                  <option>Apr - Jun</option>
-                  <option>Jul - Sept</option>
-                  <option>Oct - Des</option>
+                  {QUARTERS.map((q) => (
+                    <option key={q.label}>{q.label}</option>
+                  ))}
                 </select>
               </div>
 
@@ -178,10 +212,12 @@ export default function SalesPrediction() {
                 Sales Projection (1 Quarter — {variables.kuartal})
               </h2>
               <select
-                value={selectedProduct}
-                onChange={(e) => setSelectedProduct(e.target.value)}
+                value={selectedProductName}
+                onChange={(e) => setSelectedProductName(e.target.value)}
                 className="px-3 py-1.5 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                disabled={loading || productList.length === 0}
               >
+                {productList.length === 0 && <option>Loading...</option>}
                 {productList.map((p) => <option key={p}>{p}</option>)}
               </select>
             </div>
@@ -251,7 +287,7 @@ export default function SalesPrediction() {
               </LineChart>
             </ResponsiveContainer>
 
-            {peakIdx >= 0 && (
+            {peakIdx >= 0 && maxVal > 0 && (
               <div className="flex items-center gap-2 mt-1">
                 <span className="text-xs text-muted-foreground">Peak:</span>
                 <span className="text-xs font-semibold text-green-600">

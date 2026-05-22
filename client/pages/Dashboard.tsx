@@ -1,4 +1,4 @@
-import { useState, lazy, Suspense } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -20,108 +20,169 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import Layout from "@/components/Layout";
+import type { Inventory, ListResponse } from "@shared/api";
 
 const IndonesiaMap = lazy(() => import("@/components/IndonesiaMap"));
 
-const statCards = [
-  {
-    title: "Total Inventory Value",
-    value: "$4,250,890",
-    badge: "+2.4%",
-    badgeColor: "bg-green-100 text-green-700",
-    sub: "vs last month",
-    icon: <DollarSign className="w-5 h-5 text-orange-500" />,
-    iconBg: "bg-orange-100",
-  },
-  {
-    title: "Stockout Risk",
-    value: "12 Items",
-    badge: "Critical",
-    badgeColor: "bg-red-100 text-red-600",
-    sub: "Action required",
-    dot: true,
-    icon: <AlertTriangle className="w-5 h-5 text-red-500" />,
-    iconBg: "bg-red-100",
-  },
-  {
-    title: "Overstock Warning",
-    value: "5 Items",
-    badge: "Review",
-    badgeColor: "bg-orange-100 text-orange-600",
-    sub: "Capital locked",
-    icon: <Box className="w-5 h-5 text-amber-600" />,
-    iconBg: "bg-amber-100",
-  },
-  {
-    title: "Sales Trend Prediction",
-    value: "+15.2%",
-    badge: null,
-    sub: "Expected MoM growth",
-    icon: <TrendingUp className="w-5 h-5 text-purple-600" />,
-    iconBg: "bg-purple-100",
-  },
-];
+interface DashboardAlert {
+  id: string;
+  type: "critical" | "warning" | "success";
+  title: string;
+  body: string;
+  time: string;
+  product: string | null;
+}
 
-const allAlerts = [
-  {
-    id: "1",
-    type: "critical",
-    title: "Impending Stockout",
-    body: "Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.",
-    time: "2m ago",
-    product: "Wireless Earbuds",
-  },
-  {
-    id: "2",
-    type: "warning",
-    title: "Demand Spike Detected",
-    body: "↑34% predicted demand for Smart Watches next week due to regional promotion.",
-    time: "1h ago",
-    product: "Smart Watches",
-  },
-  {
-    id: "3",
-    type: "success",
-    title: "Transfer Executed",
-    body: "Inventory routing initiated successfully — 500 units from Jakarta Hub.",
-    time: "1h ago",
-    product: null,
-  },
-  {
-    id: "4",
-    type: "critical",
-    title: "Low Stock Warning",
-    body: "Denpasar Hub has only 80 units of Serum Vitamin C (SKU: SVC-30) remaining.",
-    time: "3h ago",
-    product: "Serum Vitamin C",
-  },
-  {
-    id: "5",
-    type: "warning",
-    title: "Overstock Alert",
-    body: "Bandung Hub is holding 2,000 units of Kaos Polos — 5× optimal level.",
-    time: "5h ago",
-    product: "Kaos Polos",
-  },
-  {
-    id: "6",
-    type: "warning",
-    title: "Expiry Risk",
-    body: "Lipstick Matte (SKU: LM-89) batch in Surabaya Hub expires in 30 days.",
-    time: "6h ago",
-    product: "Lipstick Matte",
-  },
-];
+function formatCurrency(value: number): string {
+  return `Rp ${value.toLocaleString("id-ID")}`;
+}
+
+function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
+  const alerts: DashboardAlert[] = [];
+
+  // Critical items first
+  const critical = items
+    .filter((i) => (i.status || "").toLowerCase().includes("critical"))
+    .slice(0, 4);
+
+  critical.forEach((i, idx) => {
+    const productName = i.products?.name ?? `Product #${i.product_id}`;
+    const warehouseName = i.warehouses?.name ?? `Warehouse #${i.warehouse_id}`;
+    alerts.push({
+      id: `c-${i.id}`,
+      type: "critical",
+      title: idx === 0 ? "Impending Stockout" : "Low Stock Warning",
+      body: `${warehouseName} has only ${i.current_stock} units of ${productName} remaining (shortage of ${i.shortage}).`,
+      time: `${(idx + 1) * 2}m ago`,
+      product: productName,
+    });
+  });
+
+  // Overstock items
+  const overstock = items
+    .filter((i) => (i.status || "").toLowerCase().includes("overstock"))
+    .slice(0, 3);
+
+  overstock.forEach((i, idx) => {
+    const productName = i.products?.name ?? `Product #${i.product_id}`;
+    const warehouseName = i.warehouses?.name ?? `Warehouse #${i.warehouse_id}`;
+    alerts.push({
+      id: `o-${i.id}`,
+      type: "warning",
+      title: "Overstock Alert",
+      body: `${warehouseName} is holding ${i.current_stock.toLocaleString()} units of ${productName} — capital is locked.`,
+      time: `${(idx + 1) * 30}m ago`,
+      product: productName,
+    });
+  });
+
+  return alerts;
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [viewAllOpen, setViewAllOpen] = useState(false);
+  const [inventory, setInventory] = useState<Inventory[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchInventory() {
+      try {
+        const res = await fetch("/api/inventory");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: ListResponse<Inventory> = await res.json();
+        if (cancelled) return;
+        setInventory(json.data);
+      } catch (err) {
+        console.error("Failed to fetch dashboard inventory:", err);
+      }
+    }
+    fetchInventory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const statCards = useMemo(() => {
+    const totalValue = inventory.reduce((sum, i) => {
+      const price = i.products?.price ?? 0;
+      return sum + price * (i.current_stock || 0);
+    }, 0);
+
+    const criticalCount = inventory.filter((i) =>
+      (i.status || "").toLowerCase().includes("critical")
+    ).length;
+
+    const overstockCount = inventory.filter((i) =>
+      (i.status || "").toLowerCase().includes("overstock")
+    ).length;
+
+    const totalStock = inventory.reduce((sum, i) => sum + (i.current_stock || 0), 0);
+    const totalDemand = inventory.reduce((sum, i) => sum + (i.predicted_demand || 0), 0);
+    const growthPct =
+      totalStock > 0
+        ? (((totalDemand - totalStock) / totalStock) * 100).toFixed(1)
+        : "0";
+
+    return [
+      {
+        title: "Total Inventory Value",
+        value: formatCurrency(totalValue),
+        badge: "+2.4%",
+        badgeColor: "bg-green-100 text-green-700",
+        sub: "vs last month",
+        icon: <DollarSign className="w-5 h-5 text-orange-500" />,
+        iconBg: "bg-orange-100",
+        dot: false,
+      },
+      {
+        title: "Stockout Risk",
+        value: `${criticalCount} Items`,
+        badge: criticalCount > 0 ? "Critical" : "Healthy",
+        badgeColor:
+          criticalCount > 0
+            ? "bg-red-100 text-red-600"
+            : "bg-green-100 text-green-700",
+        sub: criticalCount > 0 ? "Action required" : "All clear",
+        dot: criticalCount > 0,
+        icon: <AlertTriangle className="w-5 h-5 text-red-500" />,
+        iconBg: "bg-red-100",
+      },
+      {
+        title: "Overstock Warning",
+        value: `${overstockCount} Items`,
+        badge: overstockCount > 0 ? "Review" : "Healthy",
+        badgeColor:
+          overstockCount > 0
+            ? "bg-orange-100 text-orange-600"
+            : "bg-green-100 text-green-700",
+        sub: overstockCount > 0 ? "Capital locked" : "Optimal",
+        icon: <Box className="w-5 h-5 text-amber-600" />,
+        iconBg: "bg-amber-100",
+        dot: false,
+      },
+      {
+        title: "Sales Trend Prediction",
+        value: `${Number(growthPct) >= 0 ? "+" : ""}${growthPct}%`,
+        badge: null as string | null,
+        badgeColor: "",
+        sub: "Demand vs current stock",
+        icon: <TrendingUp className="w-5 h-5 text-purple-600" />,
+        iconBg: "bg-purple-100",
+        dot: false,
+      },
+    ];
+  }, [inventory]);
+
+  const allAlerts = useMemo(() => buildAlertsFromInventory(inventory), [inventory]);
+
+  const topAlerts = allAlerts.slice(0, 2);
 
   const handleConfirmTransfer = () => {
     setTransferDialogOpen(false);
     toast.success("Transfer initiated successfully", {
-      description: "Routing 500 units of Wireless Earbuds from Jakarta Hub.",
+      description: "Routing inventory from the source warehouse.",
     });
   };
 
@@ -211,47 +272,61 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-4 flex-1">
-              {/* Alert 1 */}
-              <div className="border border-red-100 bg-red-50 rounded-lg p-4">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground text-sm">Impending Stockout</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">2m ago</p>
-                    <p className="text-sm text-foreground mt-2">
-                      Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.
-                    </p>
-                    <Button
-                      className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
-                      onClick={() => setTransferDialogOpen(true)}
-                    >
-                      Execute Transfer Now
-                    </Button>
+              {topAlerts.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  No active alerts. All inventory is healthy.
+                </p>
+              )}
+              {topAlerts.map((alert) => {
+                const isCritical = alert.type === "critical";
+                return (
+                  <div
+                    key={alert.id}
+                    className={`border rounded-lg p-4 ${
+                      isCritical
+                        ? "border-red-100 bg-red-50"
+                        : "border-yellow-100 bg-yellow-50"
+                    }`}
+                  >
+                    <div className="flex gap-3">
+                      <AlertCircle
+                        className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                          isCritical ? "text-red-500" : "text-yellow-600"
+                        }`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-foreground text-sm">
+                          {alert.title}
+                        </h3>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {alert.time}
+                        </p>
+                        <p className="text-sm text-foreground mt-2">
+                          {alert.body}
+                        </p>
+                        {isCritical ? (
+                          <Button
+                            className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
+                            onClick={() => setTransferDialogOpen(true)}
+                          >
+                            Execute Transfer Now
+                          </Button>
+                        ) : (
+                          alert.product && (
+                            <Button
+                              variant="outline"
+                              className="w-full mt-3 text-xs h-8"
+                              onClick={() => handleReviewSimulation(alert.product!)}
+                            >
+                              Review Simulation
+                            </Button>
+                          )
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-
-              {/* Alert 2 */}
-              <div className="border border-yellow-100 bg-yellow-50 rounded-lg p-4">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground text-sm">Demand Spike Detected</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">1h ago</p>
-                    <p className="text-sm text-foreground mt-2">
-                      ↑34% predicted demand for Smart Watches next week due to regional promotion.
-                    </p>
-                    <Button
-                      variant="outline"
-                      className="w-full mt-3 text-xs h-8"
-                      onClick={() => handleReviewSimulation("Smart Watches")}
-                    >
-                      Review Simulation
-                    </Button>
-                  </div>
-                </div>
-              </div>
-
+                );
+              })}
             </div>
           </div>
         </div>
@@ -264,29 +339,26 @@ export default function Dashboard() {
             <DialogTitle>Confirm Stock Transfer</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <p className="text-sm font-semibold text-red-700">Impending Stockout</p>
-              <p className="text-sm text-foreground mt-1">
-                Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.
-              </p>
-            </div>
-            <div className="space-y-2.5 text-sm">
-              {[
-                ["Product",            "Wireless Earbuds"],
-                ["Transfer Amount",    "500 units"],
-                ["From",               "Jakarta Hub"],
-                ["Estimated Arrival",  "2 days"],
-              ].map(([label, val]) => (
-                <div key={label} className="flex justify-between">
-                  <span className="text-muted-foreground">{label}</span>
-                  <span className="font-semibold">{val}</span>
+            {topAlerts[0] && topAlerts[0].type === "critical" ? (
+              <>
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-red-700">{topAlerts[0].title}</p>
+                  <p className="text-sm text-foreground mt-1">{topAlerts[0].body}</p>
                 </div>
-              ))}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Savings</span>
-                <span className="font-semibold text-green-600">Rp 1,500,000</span>
-              </div>
-            </div>
+                <div className="space-y-2.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Product</span>
+                    <span className="font-semibold">{topAlerts[0].product ?? "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Estimated Arrival</span>
+                    <span className="font-semibold">2 days</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">No active stockout to transfer.</p>
+            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>Cancel</Button>

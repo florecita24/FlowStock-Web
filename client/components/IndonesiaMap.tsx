@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
+import type { Inventory, ListResponse, Warehouse } from "@shared/api";
 
 const makeIcon = (color: string) =>
   L.divIcon({
@@ -17,20 +18,66 @@ const makeIcon = (color: string) =>
   });
 
 const statusColor: Record<string, string> = {
-  healthy:   "#f97316",
-  critical:  "#ef4444",
+  healthy: "#f97316",
+  critical: "#ef4444",
   overstock: "#f59e0b",
 };
 
-export const warehouses = [
-  { name: "Jakarta Hub",  lat: -6.2088, lng: 106.8456, stock: 4920, status: "healthy",   months: 2 },
-  { name: "Surabaya Hub", lat: -7.2575, lng: 112.7521, stock: 2310, status: "healthy",   months: 3 },
-  { name: "Medan Hub",    lat:  3.5952, lng:  98.6722, stock: 1850, status: "critical",  months: 1 },
-  { name: "Makassar Hub", lat: -5.1477, lng: 119.4327, stock:  980, status: "healthy",   months: 2 },
-  { name: "Bandung Hub",  lat: -6.9175, lng: 107.6191, stock:  760, status: "overstock", months: 5 },
-  { name: "Semarang Hub", lat: -6.9932, lng: 110.4203, stock: 1120, status: "healthy",   months: 2 },
-  { name: "Denpasar Hub", lat: -8.6705, lng: 115.2126, stock:  430, status: "critical",  months: 1 },
-];
+interface WarehouseMarker {
+  name: string;
+  lat: number;
+  lng: number;
+  stock: number;
+  status: "healthy" | "critical" | "overstock";
+  months: number;
+}
+
+function aggregateWarehouseStats(
+  warehouses: Warehouse[],
+  inventory: Inventory[]
+): WarehouseMarker[] {
+  return warehouses
+    .filter(
+      (w) =>
+        typeof w.latitude === "number" &&
+        typeof w.longitude === "number" &&
+        !isNaN(w.latitude) &&
+        !isNaN(w.longitude)
+    )
+    .map((w) => {
+      const items = inventory.filter((i) => i.warehouse_id === w.id);
+      const stock = items.reduce((sum, i) => sum + (i.current_stock || 0), 0);
+
+      let criticalCount = 0;
+      let overstockCount = 0;
+      items.forEach((i) => {
+        const s = (i.status || "").toLowerCase();
+        if (s.includes("critical")) criticalCount++;
+        else if (s.includes("overstock")) overstockCount++;
+      });
+
+      let status: "healthy" | "critical" | "overstock" = "healthy";
+      if (criticalCount > 0) status = "critical";
+      else if (overstockCount > items.length / 2 && items.length > 0)
+        status = "overstock";
+
+      // Rough months-of-supply: total stock / total predicted demand
+      const totalDemand = items.reduce(
+        (sum, i) => sum + (i.predicted_demand || 0),
+        0
+      );
+      const months = totalDemand > 0 ? Math.max(1, Math.round(stock / totalDemand)) : 1;
+
+      return {
+        name: w.name,
+        lat: Number(w.latitude),
+        lng: Number(w.longitude),
+        stock,
+        status,
+        months,
+      };
+    });
+}
 
 function FitBounds() {
   const map = useMap();
@@ -40,9 +87,36 @@ function FitBounds() {
   return null;
 }
 
-interface Props { className?: string; }
+interface Props {
+  className?: string;
+}
 
 export default function IndonesiaMap({ className = "w-full h-64" }: Props) {
+  const [markers, setMarkers] = useState<WarehouseMarker[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchData() {
+      try {
+        const [whRes, invRes] = await Promise.all([
+          fetch("/api/warehouses"),
+          fetch("/api/inventory"),
+        ]);
+        if (!whRes.ok || !invRes.ok) throw new Error("Failed to fetch map data");
+        const whJson: ListResponse<Warehouse> = await whRes.json();
+        const invJson: ListResponse<Inventory> = await invRes.json();
+        if (cancelled) return;
+        setMarkers(aggregateWarehouseStats(whJson.data, invJson.data));
+      } catch (err) {
+        console.error("IndonesiaMap fetch error:", err);
+      }
+    }
+    fetchData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className={`rounded-xl overflow-hidden border border-border ${className}`}>
       <MapContainer
@@ -60,7 +134,7 @@ export default function IndonesiaMap({ className = "w-full h-64" }: Props) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           opacity={0.85}
         />
-        {warehouses.map((wh) => (
+        {markers.map((wh) => (
           <Marker
             key={wh.name}
             position={[wh.lat, wh.lng]}
@@ -68,7 +142,9 @@ export default function IndonesiaMap({ className = "w-full h-64" }: Props) {
           >
             <Popup>
               <div style={{ fontSize: 12, fontWeight: 600 }}>{wh.name}</div>
-              <div style={{ fontSize: 11, color: "#6b7280" }}>Stock: {wh.stock.toLocaleString()}</div>
+              <div style={{ fontSize: 11, color: "#6b7280" }}>
+                Stock: {wh.stock.toLocaleString()}
+              </div>
               <div style={{ fontSize: 11, color: statusColor[wh.status] }}>
                 {wh.months} {wh.months === 1 ? "month" : "months"} supply
               </div>

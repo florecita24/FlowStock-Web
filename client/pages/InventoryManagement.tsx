@@ -1,10 +1,11 @@
-import { Search, ChevronDown, TrendingUp, X } from "lucide-react";
+import { Search, ChevronDown, ChevronLeft, ChevronRight, TrendingUp, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Layout from "@/components/Layout";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import type { Inventory, ListResponse } from "@shared/api";
 
 interface InventoryItem {
   id: string;
@@ -21,21 +22,47 @@ interface InventoryItem {
   berat: string;
 }
 
-const inventoryData: InventoryItem[] = [
-  { id:"1", name:"Pencil 2B",        warehouse:"jakarta",  category:"stationery", currentStock:100,  predictedDemand:600,  shortage:500,  expiryDate:"N/A",     status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 5,000",    berat:"10g"   },
-  { id:"2", name:"Wireless Earbuds", warehouse:"jakarta",  category:"electronic", currentStock:50,   predictedDemand:45,                 expiryDate:"12/2025", status:"Healthy",   recommendedAction:"None",       harga:"Rp 250,000",  berat:"85g"   },
-  { id:"3", name:"Tablet Cases",     warehouse:"bandung",  category:"electronic", currentStock:5000, predictedDemand:200,                expiryDate:"N/A",     status:"Overstock", recommendedAction:"Discount",   harga:"Rp 120,000",  berat:"200g"  },
-  { id:"4", name:"A4 Paper Reams",   warehouse:"semarang", category:"stationery", currentStock:1200, predictedDemand:1150,               expiryDate:"N/A",     status:"Healthy",   recommendedAction:"None",       harga:"Rp 55,000",   berat:"2.5kg" },
-  { id:"5", name:"Lipstick Matte",   warehouse:"surabaya", category:"make up",    currentStock:300,  predictedDemand:280,                expiryDate:"06/2026", status:"Healthy",   recommendedAction:"None",       harga:"Rp 89,000",   berat:"15g"   },
-  { id:"6", name:"Serum Vitamin C",  warehouse:"denpasar", category:"skincare",   currentStock:80,   predictedDemand:150,  shortage:70,   expiryDate:"03/2026", status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 175,000",  berat:"30g"   },
-  { id:"7", name:"Kaos Polos",       warehouse:"makassar", category:"fashion",    currentStock:2000, predictedDemand:400,                expiryDate:"N/A",     status:"Overstock", recommendedAction:"Discount",   harga:"Rp 65,000",   berat:"200g"  },
-  { id:"8", name:"Smart Watches",    warehouse:"jakarta",  category:"electronic", currentStock:120,  predictedDemand:200,  shortage:80,   expiryDate:"N/A",     status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 850,000",  berat:"120g"  },
-  { id:"9", name:"Foundation",       warehouse:"medan",    category:"make up",    currentStock:450,  predictedDemand:420,                expiryDate:"09/2026", status:"Healthy",   recommendedAction:"None",       harga:"Rp 145,000",  berat:"30g"   },
-];
+function formatPrice(price: number): string {
+  return `Rp ${price.toLocaleString("id-ID")}`;
+}
 
-const warehouses   = ["All Warehouses", "Jakarta", "Bandung", "Semarang", "Surabaya", "Denpasar", "Makassar", "Medan"];
-const categories   = ["All Categories", "Electronic", "Fashion", "Stationery", "Make Up", "Skincare"];
-const statuses     = ["All Statuses", "Critical", "Healthy", "Overstock"];
+function formatWeight(weight: number): string {
+  if (weight >= 1000) return `${(weight / 1000).toFixed(1)}kg`;
+  return `${weight}g`;
+}
+
+function formatExpiryDate(date: string | null): string {
+  if (!date) return "N/A";
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return "N/A";
+  return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+}
+
+function normalizeStatus(status: string): "Healthy" | "Critical" | "Overstock" {
+  const lower = status.toLowerCase();
+  if (lower.includes("critical")) return "Critical";
+  if (lower.includes("overstock")) return "Overstock";
+  return "Healthy";
+}
+
+function mapInventoryRow(row: Inventory): InventoryItem {
+  return {
+    id: String(row.id),
+    name: row.products?.name ?? `Product #${row.product_id}`,
+    warehouse: (row.warehouses?.name ?? "").toLowerCase(),
+    category: (row.products?.category ?? "").toLowerCase(),
+    currentStock: row.current_stock,
+    predictedDemand: row.predicted_demand,
+    shortage: row.shortage > 0 ? row.shortage : undefined,
+    expiryDate: formatExpiryDate(row.expiry_date),
+    status: normalizeStatus(row.status),
+    recommendedAction: row.recommended_action || "None",
+    harga: row.products ? formatPrice(row.products.price) : "-",
+    berat: row.products ? formatWeight(row.products.weight) : "-",
+  };
+}
+
+const statuses = ["All Statuses", "Critical", "Healthy", "Overstock"];
 
 function statusColor(s: string) {
   if (s === "Critical")  return "bg-red-100 text-red-700";
@@ -143,12 +170,145 @@ function AIRecommendationPanel({ item, onApprove, onSupplier, onClose }: {
   );
 }
 
+function Pagination({
+  currentPage,
+  totalPages,
+  onPageChange,
+}: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (p: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+
+  // Build a compact list of page numbers like: 1 … 4 5 [6] 7 8 … 20
+  const pages: (number | "ellipsis")[] = [];
+  const add = (p: number) => pages.push(p);
+  const addEllipsis = () => {
+    if (pages[pages.length - 1] !== "ellipsis") pages.push("ellipsis");
+  };
+
+  for (let p = 1; p <= totalPages; p++) {
+    if (
+      p === 1 ||
+      p === totalPages ||
+      (p >= currentPage - 1 && p <= currentPage + 1)
+    ) {
+      add(p);
+    } else {
+      addEllipsis();
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+        disabled={currentPage === 1}
+        className={cn(
+          "h-8 w-8 rounded-md flex items-center justify-center border border-border transition-colors",
+          currentPage === 1
+            ? "text-muted-foreground/50 cursor-not-allowed"
+            : "text-foreground hover:bg-muted"
+        )}
+        aria-label="Previous page"
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+
+      {pages.map((p, i) =>
+        p === "ellipsis" ? (
+          <span
+            key={`e-${i}`}
+            className="h-8 w-8 flex items-center justify-center text-xs text-muted-foreground"
+          >
+            …
+          </span>
+        ) : (
+          <button
+            key={p}
+            onClick={() => onPageChange(p)}
+            className={cn(
+              "h-8 min-w-8 px-2 rounded-md text-xs font-semibold border transition-colors",
+              p === currentPage
+                ? "bg-orange-500 text-white border-orange-500"
+                : "border-border text-foreground hover:bg-muted"
+            )}
+          >
+            {p}
+          </button>
+        )
+      )}
+
+      <button
+        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+        disabled={currentPage === totalPages}
+        className={cn(
+          "h-8 w-8 rounded-md flex items-center justify-center border border-border transition-colors",
+          currentPage === totalPages
+            ? "text-muted-foreground/50 cursor-not-allowed"
+            : "text-foreground hover:bg-muted"
+        )}
+        aria-label="Next page"
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
+  );
+}
+
 export default function InventoryManagement() {
   const [openSolution, setOpenSolution] = useState<string | null>(null);
   const [warehouse,    setWarehouse]    = useState("All Warehouses");
   const [category,     setCategory]     = useState("All Categories");
   const [status,       setStatus]       = useState("All Statuses");
   const [searchQuery,  setSearchQuery]  = useState("");
+  const [inventoryData, setInventoryData] = useState<InventoryItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchInventory() {
+      try {
+        setLoading(true);
+        const res = await fetch("/api/inventory");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: ListResponse<Inventory> = await res.json();
+        if (cancelled) return;
+        setInventoryData(json.data.map(mapInventoryRow));
+        setFetchError(null);
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to fetch inventory:", err);
+        setFetchError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    fetchInventory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const warehouseOptions = useMemo(() => {
+    const set = new Set<string>();
+    inventoryData.forEach((i) => i.warehouse && set.add(i.warehouse));
+    return [
+      "All Warehouses",
+      ...Array.from(set).map((w) => w.charAt(0).toUpperCase() + w.slice(1)),
+    ];
+  }, [inventoryData]);
+
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    inventoryData.forEach((i) => i.category && set.add(i.category));
+    return [
+      "All Categories",
+      ...Array.from(set).map((c) => c.charAt(0).toUpperCase() + c.slice(1)),
+    ];
+  }, [inventoryData]);
 
   const handleApprove = (item: InventoryItem) => {
     setOpenSolution(null);
@@ -171,6 +331,21 @@ export default function InventoryManagement() {
     return true;
   });
 
+  // ── Pagination ──
+  const ROWS_PER_PAGE = 25;
+  const [currentPage, setCurrentPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
+
+  // Reset to page 1 when filters change or data length changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [warehouse, category, status, searchQuery, inventoryData.length]);
+
+  const safePage = Math.min(currentPage, totalPages);
+  const startIdx = (safePage - 1) * ROWS_PER_PAGE;
+  const endIdx = startIdx + ROWS_PER_PAGE;
+  const paginated = filtered.slice(startIdx, endIdx);
+
   return (
     <Layout>
       <div className="p-8 space-y-6">
@@ -187,9 +362,9 @@ export default function InventoryManagement() {
             Filter Products
           </h2>
           <div className="flex items-center gap-3 flex-wrap">
-            <FilterSelect options={warehouses} value={warehouse} onChange={setWarehouse} />
-            <FilterSelect options={categories} value={category}  onChange={setCategory}  />
-            <FilterSelect options={statuses}   value={status}    onChange={setStatus}    />
+            <FilterSelect options={warehouseOptions} value={warehouse} onChange={setWarehouse} />
+            <FilterSelect options={categoryOptions}  value={category}  onChange={setCategory}  />
+            <FilterSelect options={statuses}         value={status}    onChange={setStatus}    />
             <div className="ml-auto relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -225,7 +400,28 @@ export default function InventoryManagement() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((item) => (
+                {loading && (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                      Loading inventory data...
+                    </td>
+                  </tr>
+                )}
+                {fetchError && !loading && (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-red-600">
+                      Failed to load: {fetchError}
+                    </td>
+                  </tr>
+                )}
+                {!loading && !fetchError && filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                      No inventory items found.
+                    </td>
+                  </tr>
+                )}
+                {!loading && !fetchError && paginated.map((item) => (
                   <>
                     <tr
                       key={item.id}
@@ -278,10 +474,20 @@ export default function InventoryManagement() {
               </tbody>
             </table>
           </div>
-          <div className="px-6 py-3 border-t border-border">
+          <div className="px-6 py-3 border-t border-border flex items-center justify-between gap-4 flex-wrap">
             <p className="text-xs text-muted-foreground">
-              Showing {filtered.length} of {inventoryData.length} items
+              Showing {filtered.length === 0 ? 0 : startIdx + 1}–
+              {Math.min(endIdx, filtered.length)} of {filtered.length} items
+              {filtered.length !== inventoryData.length && (
+                <span className="ml-1">(filtered from {inventoryData.length})</span>
+              )}
             </p>
+
+            <Pagination
+              currentPage={safePage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+            />
           </div>
         </div>
       </div>
