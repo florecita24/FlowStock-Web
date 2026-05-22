@@ -646,7 +646,7 @@ export default function InventoryManagement() {
                           </span>
                         </td>
                         <td className="py-4 px-4 text-center">
-                          {item.recommended_action === "None" ? (
+                          {(item.recommended_action === "None" || item.status === "Healthy") ? (
                             <span className="text-xs text-muted-foreground">
                               —
                             </span>
@@ -669,7 +669,8 @@ export default function InventoryManagement() {
                       </tr>
 
                       {openSolution === item.id &&
-                        item.recommended_action !== "None" && (
+                        item.recommended_action !== "None" &&
+                        item.status !== "Healthy" && (
                           <AIRecommendationPanel
                             key={`ai-${item.id}`}
                             item={item}

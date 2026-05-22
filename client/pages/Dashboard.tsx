@@ -288,21 +288,23 @@ export default function Dashboard() {
                             </div>
                           </div>
                           <p className={`text-sm mt-2 leading-6 ${styles.body}`}>{alert.body}</p>
-                          <Button
-                            className={`w-full mt-3 text-xs h-9 ${alert.severity === "critical" ? "bg-primary text-white hover:bg-orange-500" : ""}`}
-                            variant={styles.buttonVariant}
-                            onClick={() => {
-                              if (alert.recommendedAction === "Transfer" || alert.ctaLabel?.toLowerCase().includes("transfer")) {
-                                setSelectedTransferAlert(alert);
-                                setTransferDialogOpen(true);
-                                return;
-                              }
+                          {(alert.recommendedAction !== "None" && alert.severity !== "success") ? (
+                            <Button
+                              className={`w-full mt-3 text-xs h-9 ${alert.severity === "critical" ? "bg-primary text-white hover:bg-orange-500" : ""}`}
+                              variant={styles.buttonVariant}
+                              onClick={() => {
+                                if (alert.recommendedAction === "Transfer" || alert.ctaLabel?.toLowerCase().includes("transfer")) {
+                                  setSelectedTransferAlert(alert);
+                                  setTransferDialogOpen(true);
+                                  return;
+                                }
 
-                              handleReviewSimulation(alert.productName ?? "Inventory");
-                            }}
-                          >
-                            {alert.ctaLabel ?? "View Simulation"}
-                          </Button>
+                                handleReviewSimulation(alert.productName ?? "Inventory");
+                              }}
+                            >
+                              {alert.ctaLabel ?? "View Simulation"}
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
