@@ -1,46 +1,130 @@
-import { Search, ChevronDown, TrendingUp, X } from "lucide-react";
+import { Search, ChevronDown, TrendingUp, X, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Layout from "@/components/Layout";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { fetchAiApi } from "@/lib/ai-api";
+import {
+  InventoryRecommendation,
+  InventoryRecommendationsResponse,
+  RecommendationExplanation,
+} from "@shared/api";
 
-interface InventoryItem {
-  id: string;
-  name: string;
-  warehouse: string;
-  category: string;
-  currentStock: number;
-  predictedDemand: number;
-  shortage?: number;
-  expiryDate: string;
-  status: "Healthy" | "Critical" | "Overstock";
-  recommendedAction: string;
-  harga: string;
-  berat: string;
+function formatIDR(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) {
+    return "-";
+  }
+
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
-const inventoryData: InventoryItem[] = [
-  { id:"1", name:"Pencil 2B",        warehouse:"jakarta",  category:"stationery", currentStock:100,  predictedDemand:600,  shortage:500,  expiryDate:"N/A",     status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 5,000",    berat:"10g"   },
-  { id:"2", name:"Wireless Earbuds", warehouse:"jakarta",  category:"electronic", currentStock:50,   predictedDemand:45,                 expiryDate:"12/2025", status:"Healthy",   recommendedAction:"None",       harga:"Rp 250,000",  berat:"85g"   },
-  { id:"3", name:"Tablet Cases",     warehouse:"bandung",  category:"electronic", currentStock:5000, predictedDemand:200,                expiryDate:"N/A",     status:"Overstock", recommendedAction:"Discount",   harga:"Rp 120,000",  berat:"200g"  },
-  { id:"4", name:"A4 Paper Reams",   warehouse:"semarang", category:"stationery", currentStock:1200, predictedDemand:1150,               expiryDate:"N/A",     status:"Healthy",   recommendedAction:"None",       harga:"Rp 55,000",   berat:"2.5kg" },
-  { id:"5", name:"Lipstick Matte",   warehouse:"surabaya", category:"make up",    currentStock:300,  predictedDemand:280,                expiryDate:"06/2026", status:"Healthy",   recommendedAction:"None",       harga:"Rp 89,000",   berat:"15g"   },
-  { id:"6", name:"Serum Vitamin C",  warehouse:"denpasar", category:"skincare",   currentStock:80,   predictedDemand:150,  shortage:70,   expiryDate:"03/2026", status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 175,000",  berat:"30g"   },
-  { id:"7", name:"Kaos Polos",       warehouse:"makassar", category:"fashion",    currentStock:2000, predictedDemand:400,                expiryDate:"N/A",     status:"Overstock", recommendedAction:"Discount",   harga:"Rp 65,000",   berat:"200g"  },
-  { id:"8", name:"Smart Watches",    warehouse:"jakarta",  category:"electronic", currentStock:120,  predictedDemand:200,  shortage:80,   expiryDate:"N/A",     status:"Critical",  recommendedAction:"⚡ Transfer", harga:"Rp 850,000",  berat:"120g"  },
-  { id:"9", name:"Foundation",       warehouse:"medan",    category:"make up",    currentStock:450,  predictedDemand:420,                expiryDate:"09/2026", status:"Healthy",   recommendedAction:"None",       harga:"Rp 145,000",  berat:"30g"   },
+function getOptionTotalCost(option: RecommendationExplanation["best_option"]) {
+  return option.cost_breakdown?.total_cost ?? null;
+}
+
+function renderCostSummary(
+  option: RecommendationExplanation["best_option"],
+  compareTotal?: number | null,
+  emphasize = false
+) {
+  const total = getOptionTotalCost(option);
+  const savings =
+    total !== null && compareTotal !== undefined && compareTotal !== null
+      ? Math.max(compareTotal - total, 0)
+      : null;
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border p-3 mb-3",
+        emphasize ? "bg-white/70 border-orange-200" : "bg-white border-border"
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Estimated Total Cost
+          </p>
+          <p className="text-lg font-bold text-foreground mt-0.5">
+            {formatIDR(total)}
+          </p>
+        </div>
+        {savings !== null && savings > 0 ? (
+          <div className="text-right">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Estimated Saving
+            </p>
+            <p className="text-sm font-bold text-green-600">
+              {formatIDR(savings)}
+            </p>
+          </div>
+        ) : null}
+      </div>
+
+      {option.cost_breakdown ? (
+        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+          <div className="rounded-lg bg-muted/40 px-2 py-1.5">
+            Item: <span className="font-semibold text-foreground">{formatIDR(option.cost_breakdown.item_cost)}</span>
+          </div>
+          <div className="rounded-lg bg-muted/40 px-2 py-1.5">
+            Shipping: <span className="font-semibold text-foreground">{formatIDR(option.cost_breakdown.shipping_cost)}</span>
+          </div>
+          <div className="rounded-lg bg-muted/40 px-2 py-1.5 col-span-2">
+            Other: <span className="font-semibold text-foreground">{formatIDR(option.cost_breakdown.other_costs)}</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const warehouses = [
+  "All Warehouses",
+  "Jakarta Hub",
+  "Bandung Hub",
+  "Semarang Hub",
+  "Surabaya Hub",
+  "Denpasar Hub",
+  "Makassar Hub",
+  "Medan Hub",
+  "Palembang Hub",
+  "Yogyakarta Hub",
+  "Balikpapan Hub",
+];
+const categories = [
+  "All Categories",
+  "Electronic",
+  "Fashion",
+  "Stationery",
+  "Beauty",
+  "Food",
+];
+const statuses = ["All Statuses", "Critical", "Healthy", "Overstock"];
+const actions = [
+  "All Actions",
+  "None",
+  "Transfer",
+  "Discount",
+  "Order",
 ];
 
-const warehouses   = ["All Warehouses", "Jakarta", "Bandung", "Semarang", "Surabaya", "Denpasar", "Makassar", "Medan"];
-const categories   = ["All Categories", "Electronic", "Fashion", "Stationery", "Make Up", "Skincare"];
-const statuses     = ["All Statuses", "Critical", "Healthy", "Overstock"];
-
 function statusColor(s: string) {
-  if (s === "Critical")  return "bg-red-100 text-red-700";
+  if (s === "Critical") return "bg-red-100 text-red-700";
   if (s === "Overstock") return "bg-orange-100 text-orange-700";
   return "bg-green-100 text-green-700";
+}
+
+function actionBadgeColor(a: string) {
+  if (a === "Transfer") return "bg-blue-100 text-blue-700";
+  if (a === "Order") return "bg-red-100 text-red-700";
+  if (a === "Discount") return "bg-orange-100 text-orange-700";
+  return "bg-gray-100 text-gray-700";
 }
 
 function FilterSelect({
@@ -59,82 +143,252 @@ function FilterSelect({
         onChange={(e) => onChange(e.target.value)}
         className="appearance-none px-4 py-2 pr-8 bg-background border border-border rounded-lg text-sm font-medium hover:bg-muted transition-colors cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary"
       >
-        {options.map((o) => <option key={o}>{o}</option>)}
+        {options.map((o) => (
+          <option key={o}>{o}</option>
+        ))}
       </select>
       <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" />
     </div>
   );
 }
 
-function AIRecommendationPanel({ item, onApprove, onSupplier, onClose }: {
-  item: InventoryItem;
+function AIRecommendationPanel({
+  item,
+  onApprove,
+  onSupplier,
+  onClose,
+}: {
+  item: InventoryRecommendation;
   onApprove: () => void;
   onSupplier: () => void;
   onClose: () => void;
 }) {
+  const [explanation, setExplanation] =
+    useState<RecommendationExplanation | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch explanation from Gemini on mount
+  useEffect(() => {
+    const fetchExplanation = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+
+        const response = await fetchAiApi(
+          "/api/generate-recommendation-explanation",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              product_name: item.product_name,
+              warehouse_name: item.warehouse_name,
+              current_stock: item.current_stock,
+              predicted_demand_14d: item.predicted_demand_14d,
+              target_stock: item.target_stock,
+              shortage: item.shortage,
+              status: item.status,
+              recommended_action: item.recommended_action,
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch recommendation");
+        }
+
+        const data: RecommendationExplanation = await response.json();
+        setExplanation(data);
+      } catch (err) {
+        console.error("Error fetching recommendation:", err);
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch recommendation"
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchExplanation();
+  }, [item]);
+
   return (
     <tr>
-      <td colSpan={9} className="px-4 pb-4 bg-orange-50/50">
+      <td colSpan={10} className="px-4 pb-4 bg-orange-50/50">
         <div className="border border-orange-200 rounded-xl p-5 bg-white shadow-sm mt-1">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-purple-200 rounded-full flex items-center justify-center">
                 <span className="text-purple-700 font-bold text-xs">AI</span>
               </div>
-              <h3 className="font-bold text-foreground">AI Recommendation</h3>
+              <h3 className="font-bold text-foreground">
+                AI Recommendation - {item.product_name}
+              </h3>
             </div>
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <button
+              onClick={onClose}
+              className="text-muted-foreground hover:text-foreground"
+            >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="border-2 border-orange-400 rounded-xl p-4 bg-orange-50 relative">
-              <div className="absolute -top-3 left-4 bg-orange-500 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
-                BEST OPTION
-              </div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 bg-orange-200 rounded-full flex items-center justify-center">
-                  <TrendingUp className="w-5 h-5 text-orange-600" />
-                </div>
-                <div>
-                  <p className="font-bold text-foreground text-sm">Transfer Stock</p>
-                  <p className="text-xs text-muted-foreground">From Jakarta Hub</p>
-                </div>
-                <div className="ml-auto text-right">
-                  <p className="font-bold text-orange-600">500 units</p>
-                  <p className="text-xs text-green-600">Save Rp 1,500,000</p>
-                </div>
-              </div>
-              <p className="text-xs text-foreground">
-                Sufficient overstock in Jakarta Hub. Transit 2 days, matches demand spike.
-              </p>
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-orange-500" />
+              <span className="ml-2 text-sm text-muted-foreground">
+                Analyzing with AI...
+              </span>
             </div>
+          ) : error ? (
+            <div className="flex items-start gap-3 p-4 bg-red-50 rounded-lg border border-red-200">
+              <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold text-red-700 text-sm">{error}</p>
+                <p className="text-xs text-red-600 mt-1">
+                  Using default recommendation logic.
+                </p>
+              </div>
+            </div>
+          ) : explanation ? (
+            <div className="grid grid-cols-2 gap-4">
+              {/* Best Option */}
+              <div className="border-2 border-orange-400 rounded-xl p-4 bg-orange-50 relative">
+                <div className="absolute -top-3 left-4 bg-orange-500 text-white text-xs font-bold px-2.5 py-0.5 rounded-full">
+                  BEST OPTION
+                </div>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-9 h-9 bg-orange-200 rounded-full flex items-center justify-center flex-shrink-0">
+                    <TrendingUp className="w-5 h-5 text-orange-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold text-foreground text-sm">
+                      {explanation.best_option.title}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {explanation.best_option.costImpact}
+                    </p>
+                  </div>
+                </div>
+                {renderCostSummary(
+                  explanation.best_option,
+                  getOptionTotalCost(explanation.alternative_option),
+                  true
+                )}
+                <p className="text-xs text-foreground mb-3">
+                  {explanation.best_option.description}
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="font-semibold text-foreground">Risk:</p>
+                    <p
+                      className={cn(
+                        "font-medium",
+                        explanation.best_option.riskLevel === "Low"
+                          ? "text-green-600"
+                          : explanation.best_option.riskLevel === "Medium"
+                            ? "text-yellow-600"
+                            : "text-red-600"
+                      )}
+                    >
+                      {explanation.best_option.riskLevel}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">Feasibility:</p>
+                    <p
+                      className={cn(
+                        "font-medium",
+                        explanation.best_option.feasibility === "High"
+                          ? "text-green-600"
+                          : explanation.best_option.feasibility === "Medium"
+                            ? "text-yellow-600"
+                            : "text-red-600"
+                      )}
+                    >
+                      {explanation.best_option.feasibility}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
-            <div className="border border-border rounded-xl p-4">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center text-gray-600 text-sm">
-                  📦
+              {/* Alternative Option */}
+              <div className="border border-border rounded-xl p-4 bg-muted/30">
+                <div className="absolute -top-3 left-4 bg-gray-500 text-white text-xs font-bold px-2.5 py-0.5 rounded-full invisible">
+                  ALTERNATIVE
                 </div>
-                <div>
-                  <p className="font-bold text-foreground text-sm">Order from Supplier</p>
-                  <p className="text-xs text-muted-foreground">Indostationery Ltd.</p>
+                <div className="flex items-start gap-3 mb-3">
+                  <div className="w-9 h-9 bg-gray-200 rounded-full flex items-center justify-center flex-shrink-0 text-gray-600">
+                    <span className="text-sm">📋</span>
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-bold text-foreground text-sm">
+                      {explanation.alternative_option.title}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {explanation.alternative_option.costImpact}
+                    </p>
+                  </div>
                 </div>
-                <div className="ml-auto text-right">
-                  <p className="font-bold text-foreground">Rp 1,000,000</p>
-                  <p className="text-xs text-muted-foreground">incl. 7,000/unit</p>
+                {renderCostSummary(explanation.alternative_option)}
+                <p className="text-xs text-foreground mb-3">
+                  {explanation.alternative_option.description}
+                </p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <p className="font-semibold text-foreground">Risk:</p>
+                    <p
+                      className={cn(
+                        "font-medium",
+                        explanation.alternative_option.riskLevel === "Low"
+                          ? "text-green-600"
+                          : explanation.alternative_option.riskLevel ===
+                              "Medium"
+                            ? "text-yellow-600"
+                            : "text-red-600"
+                      )}
+                    >
+                      {explanation.alternative_option.riskLevel}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-foreground">Feasibility:</p>
+                    <p
+                      className={cn(
+                        "font-medium",
+                        explanation.alternative_option.feasibility === "High"
+                          ? "text-green-600"
+                          : explanation.alternative_option.feasibility ===
+                              "Medium"
+                            ? "text-yellow-600"
+                            : "text-red-600"
+                      )}
+                    >
+                      {explanation.alternative_option.feasibility}
+                    </p>
+                  </div>
                 </div>
               </div>
-              <p className="text-xs text-foreground">
-                Lead time 4 days. Stockout risk before delivery. Uses additional capital.
-              </p>
             </div>
-          </div>
+          ) : null}
 
           <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-border">
-            <Button variant="outline" onClick={onSupplier}>Order from Supplier</Button>
-            <Button className="bg-orange-500 hover:bg-orange-600 text-white" onClick={onApprove}>
-              ✓ Approve Transfer
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-orange-500 hover:bg-orange-600 text-white"
+              onClick={onApprove}
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                "✓ Approve Best Option"
+              )}
             </Button>
           </div>
         </div>
@@ -144,30 +398,85 @@ function AIRecommendationPanel({ item, onApprove, onSupplier, onClose }: {
 }
 
 export default function InventoryManagement() {
-  const [openSolution, setOpenSolution] = useState<string | null>(null);
-  const [warehouse,    setWarehouse]    = useState("All Warehouses");
-  const [category,     setCategory]     = useState("All Categories");
-  const [status,       setStatus]       = useState("All Statuses");
-  const [searchQuery,  setSearchQuery]  = useState("");
+  const [data, setData] = useState<InventoryRecommendation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [openSolution, setOpenSolution] = useState<number | null>(null);
+  const [warehouse, setWarehouse] = useState("All Warehouses");
+  const [category, setCategory] = useState("All Categories");
+  const [status, setStatus] = useState("All Statuses");
+  const [action, setAction] = useState("All Actions");
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const handleApprove = (item: InventoryItem) => {
+  // Fetch data from API
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const params = new URLSearchParams();
+
+        if (warehouse !== "All Warehouses") {
+          params.append("warehouse", warehouse);
+        }
+        if (category !== "All Categories") {
+          params.append("category", category);
+        }
+        if (status !== "All Statuses") {
+          params.append("status", status);
+        }
+        if (action !== "All Actions") {
+          params.append("action", action);
+        }
+
+        const response = await fetchAiApi(
+          `/api/inventory-recommendations?${params.toString()}`,
+          undefined,
+          `/api/inventory-recommendations?${params.toString()}`
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch recommendations");
+        }
+
+        const result: InventoryRecommendationsResponse =
+          await response.json();
+        setData(result.data);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "An error occurred"
+        );
+        console.error("Error fetching inventory recommendations:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [warehouse, category, status, action]);
+
+  const handleApprove = (item: InventoryRecommendation) => {
     setOpenSolution(null);
-    toast.success("Transfer approved!", {
-      description: `500 units of ${item.name} are being routed from Jakarta Hub.`,
+    toast.success("Action approved!", {
+      description: `Recommendation for ${item.product_name} at ${item.warehouse_name} has been approved.`,
     });
   };
 
-  const handleSupplier = (item: InventoryItem) => {
-    toast.info("Order placed with supplier", {
-      description: `Purchase order for ${item.name} sent to Indostationery Ltd.`,
+  const handleSupplier = (item: InventoryRecommendation) => {
+    toast.info("Action triggered", {
+      description: `Action for ${item.product_name} sent to operations team.`,
     });
   };
 
-  const filtered = inventoryData.filter((item) => {
-    if (warehouse !== "All Warehouses" && item.warehouse !== warehouse.toLowerCase()) return false;
-    if (category  !== "All Categories"  && item.category  !== category.toLowerCase())  return false;
-    if (status    !== "All Statuses"    && item.status    !== status)                  return false;
-    if (searchQuery && !item.name.toLowerCase().includes(searchQuery.toLowerCase()))   return false;
+  const filtered = data.filter((item) => {
+    if (
+      searchQuery &&
+      !item.product_name
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase())
+    ) {
+      return false;
+    }
     return true;
   });
 
@@ -175,9 +484,11 @@ export default function InventoryManagement() {
     <Layout>
       <div className="p-8 space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Inventory Management</h1>
+          <h1 className="text-3xl font-bold text-foreground">
+            Inventory Management
+          </h1>
           <p className="text-sm text-white mt-1">
-            Manage inventory levels, respond to alerts, and execute transfers.
+            AI-powered inventory recommendations based on demand forecasts.
           </p>
         </div>
 
@@ -187,9 +498,26 @@ export default function InventoryManagement() {
             Filter Products
           </h2>
           <div className="flex items-center gap-3 flex-wrap">
-            <FilterSelect options={warehouses} value={warehouse} onChange={setWarehouse} />
-            <FilterSelect options={categories} value={category}  onChange={setCategory}  />
-            <FilterSelect options={statuses}   value={status}    onChange={setStatus}    />
+            <FilterSelect
+              options={warehouses}
+              value={warehouse}
+              onChange={setWarehouse}
+            />
+            <FilterSelect
+              options={categories}
+              value={category}
+              onChange={setCategory}
+            />
+            <FilterSelect
+              options={statuses}
+              value={status}
+              onChange={setStatus}
+            />
+            <FilterSelect
+              options={actions}
+              value={action}
+              onChange={setAction}
+            />
             <div className="ml-auto relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
@@ -210,79 +538,159 @@ export default function InventoryManagement() {
             </h2>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left py-3 px-5 font-semibold text-foreground whitespace-nowrap">Product Name</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Current Stock</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Predicted Demand (4 days)</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Price</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Weight</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Expiry Date</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Status</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Recommended Action</th>
-                  <th className="text-center py-3 px-4 font-semibold text-foreground whitespace-nowrap">Solution</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((item) => (
-                  <>
-                    <tr
-                      key={item.id}
-                      className={cn(
-                        "border-b border-border hover:bg-muted/40 transition-colors",
-                        openSolution === item.id && "bg-orange-50"
-                      )}
-                    >
-                      <td className="py-4 px-5 font-semibold text-foreground">{item.name}</td>
-                      <td className="py-4 px-4 font-bold text-foreground">{item.currentStock}</td>
-                      <td className="py-4 px-4">
-                        <p className={cn("font-medium", item.shortage ? "text-red-600" : "text-foreground")}>
-                          {item.predictedDemand}
-                        </p>
-                        {item.shortage && (
-                          <p className="text-xs text-red-500">↓{item.shortage} short</p>
+            {loading ? (
+              <div className="px-6 py-8 text-center text-muted-foreground">
+                Loading recommendations...
+              </div>
+            ) : error ? (
+              <div className="px-6 py-8 text-center">
+                <p className="text-red-600 font-semibold">{error}</p>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Make sure the AI model has been trained and recommendations
+                  CSV exists.
+                </p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left py-3 px-5 font-semibold text-foreground whitespace-nowrap">
+                      Product
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Warehouse
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Current Stock
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Predicted Demand (14d)
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Target Stock
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Category
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Status
+                    </th>
+                    <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Recommended Action
+                    </th>
+                    <th className="text-center py-3 px-4 font-semibold text-foreground whitespace-nowrap">
+                      Solution
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((item) => (
+                    <>
+                      <tr
+                        key={item.id}
+                        className={cn(
+                          "border-b border-border hover:bg-muted/40 transition-colors",
+                          openSolution === item.id && "bg-orange-50"
                         )}
-                      </td>
-                      <td className="py-4 px-4 text-foreground whitespace-nowrap">{item.harga}</td>
-                      <td className="py-4 px-4 text-foreground whitespace-nowrap">{item.berat}</td>
-                      <td className="py-4 px-4 text-foreground whitespace-nowrap">{item.expiryDate}</td>
-                      <td className="py-4 px-4">
-                        <span className={cn("inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap", statusColor(item.status))}>
-                          {item.status}
-                        </span>
-                      </td>
-                      <td className="py-4 px-4 text-foreground">{item.recommendedAction}</td>
-                      <td className="py-4 px-4 text-center">
-                        <Button
-                          size="sm"
-                          className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 px-4 min-w-[120px]"
-                          onClick={() => setOpenSolution(openSolution === item.id ? null : item.id)}
-                        >
-                          {openSolution === item.id ? "Close Solution" : "View Solution"}
-                        </Button>
-                      </td>
-                    </tr>
+                      >
+                        <td className="py-4 px-5 font-semibold text-foreground">
+                          {item.product_name}
+                        </td>
+                        <td className="py-4 px-4 text-foreground text-xs">
+                          {item.warehouse_name}
+                        </td>
+                        <td className="py-4 px-4 font-bold text-foreground">
+                          {item.current_stock}
+                        </td>
+                        <td className="py-4 px-4">
+                          <p
+                            className={cn(
+                              "font-medium",
+                              item.shortage > 0
+                                ? "text-red-600"
+                                : "text-foreground"
+                            )}
+                          >
+                            {item.predicted_demand_14d}
+                          </p>
+                          {item.shortage > 0 && (
+                            <p className="text-xs text-red-500">
+                              ↓{item.shortage} short
+                            </p>
+                          )}
+                        </td>
+                        <td className="py-4 px-4 text-foreground">
+                          {item.target_stock}
+                        </td>
+                        <td className="py-4 px-4 text-foreground text-xs">
+                          {item.product_category}
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            className={cn(
+                              "inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap",
+                              statusColor(item.status)
+                            )}
+                          >
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4">
+                          <span
+                            className={cn(
+                              "inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap",
+                              actionBadgeColor(item.recommended_action)
+                            )}
+                          >
+                            {item.recommended_action}
+                          </span>
+                        </td>
+                        <td className="py-4 px-4 text-center">
+                          {item.recommended_action === "None" ? (
+                            <span className="text-xs text-muted-foreground">
+                              —
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 px-4 min-w-[120px]"
+                              onClick={() =>
+                                setOpenSolution(
+                                  openSolution === item.id ? null : item.id
+                                )
+                              }
+                            >
+                              {openSolution === item.id
+                                ? "Close"
+                                : "View Details"}
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
 
-                    {openSolution === item.id && (
-                      <AIRecommendationPanel
-                        key={`ai-${item.id}`}
-                        item={item}
-                        onApprove={() => handleApprove(item)}
-                        onSupplier={() => handleSupplier(item)}
-                        onClose={() => setOpenSolution(null)}
-                      />
-                    )}
-                  </>
-                ))}
-              </tbody>
-            </table>
+                      {openSolution === item.id &&
+                        item.recommended_action !== "None" && (
+                          <AIRecommendationPanel
+                            key={`ai-${item.id}`}
+                            item={item}
+                            onApprove={() => handleApprove(item)}
+                            onSupplier={() => handleSupplier(item)}
+                            onClose={() => setOpenSolution(null)}
+                          />
+                        )}
+                    </>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
-          <div className="px-6 py-3 border-t border-border">
-            <p className="text-xs text-muted-foreground">
-              Showing {filtered.length} of {inventoryData.length} items
-            </p>
-          </div>
+          {!loading && !error && (
+            <div className="px-6 py-3 border-t border-border">
+              <p className="text-xs text-muted-foreground">
+                Showing {filtered.length} of {data.length} items
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </Layout>

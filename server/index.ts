@@ -2,6 +2,9 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { handleDemo } from "./routes/demo";
+import { handleInventoryRecommendations } from "./routes/inventory-recommendations";
+import { handleActionAlerts } from "./routes/action-alerts";
+import { handleGenerateRecommendationExplanation } from "./routes/generate-recommendation-explanation";
 
 export function createServer() {
   const app = express();
@@ -18,6 +21,18 @@ export function createServer() {
   });
 
   app.get("/api/demo", handleDemo);
+
+  // Inventory AI recommendations from model
+  app.get("/api/inventory-recommendations", handleInventoryRecommendations);
+
+  // Top dashboard alerts ranked from inventory_ai_recommendations.csv
+  app.get("/api/action-alerts", handleActionAlerts);
+
+  // Generate recommendation explanation via Gemini
+  app.post(
+    "/api/generate-recommendation-explanation",
+    handleGenerateRecommendationExplanation
+  );
 
   return app;
 }

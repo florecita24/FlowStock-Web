@@ -1,9 +1,9 @@
-import { useState, lazy, Suspense } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   DollarSign, AlertTriangle, Box, TrendingUp,
-  AlertCircle, CheckCircle2, Clock,
+  AlertCircle, CheckCircle2, Clock, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,6 +20,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import Layout from "@/components/Layout";
+import { fetchActionAlertsApi } from "@/lib/ai-api";
+import {
+  AIActionAlert,
+  AIActionAlertsResponse,
+} from "@shared/api";
 
 const IndonesiaMap = lazy(() => import("@/components/IndonesiaMap"));
 
@@ -62,66 +67,113 @@ const statCards = [
   },
 ];
 
-const allAlerts = [
-  {
-    id: "1",
-    type: "critical",
-    title: "Impending Stockout",
-    body: "Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.",
-    time: "2m ago",
-    product: "Wireless Earbuds",
-  },
-  {
-    id: "2",
-    type: "warning",
-    title: "Demand Spike Detected",
-    body: "↑34% predicted demand for Smart Watches next week due to regional promotion.",
-    time: "1h ago",
-    product: "Smart Watches",
-  },
-  {
-    id: "3",
-    type: "success",
-    title: "Transfer Executed",
-    body: "Inventory routing initiated successfully — 500 units from Jakarta Hub.",
-    time: "1h ago",
-    product: null,
-  },
-  {
-    id: "4",
-    type: "critical",
-    title: "Low Stock Warning",
-    body: "Denpasar Hub has only 80 units of Serum Vitamin C (SKU: SVC-30) remaining.",
-    time: "3h ago",
-    product: "Serum Vitamin C",
-  },
-  {
-    id: "5",
-    type: "warning",
-    title: "Overstock Alert",
-    body: "Bandung Hub is holding 2,000 units of Kaos Polos — 5× optimal level.",
-    time: "5h ago",
-    product: "Kaos Polos",
-  },
-  {
-    id: "6",
-    type: "warning",
-    title: "Expiry Risk",
-    body: "Lipstick Matte (SKU: LM-89) batch in Surabaya Hub expires in 30 days.",
-    time: "6h ago",
-    product: "Lipstick Matte",
-  },
-];
+const legacyAlertCards: AIActionAlert[] = [];
+
+function alertCardStyle(severity: AIActionAlert["severity"]) {
+  if (severity === "critical") {
+    return {
+      wrapper: "border border-red-100 bg-red-50",
+      icon: "text-red-500",
+      title: "text-foreground",
+      body: "text-foreground",
+      time: "text-muted-foreground",
+      buttonVariant: "default" as const,
+      success: false,
+    };
+  }
+
+  if (severity === "warning") {
+    return {
+      wrapper: "border border-yellow-100 bg-yellow-50",
+      icon: "text-yellow-600",
+      title: "text-foreground",
+      body: "text-foreground",
+      time: "text-muted-foreground",
+      buttonVariant: "outline" as const,
+      success: false,
+    };
+  }
+
+  return {
+    wrapper: "bg-slate-900 border border-slate-800",
+    icon: "text-slate-400",
+    title: "text-white",
+    body: "text-slate-300",
+    time: "text-slate-500",
+    buttonVariant: "secondary" as const,
+    success: true,
+  };
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [viewAllOpen, setViewAllOpen] = useState(false);
+  const [alerts, setAlerts] = useState<AIActionAlert[]>([]);
+  const [loadingAlerts, setLoadingAlerts] = useState(true);
+  const [selectedTransferAlert, setSelectedTransferAlert] = useState<AIActionAlert | null>(null);
+  const [executionAlert, setExecutionAlert] = useState<AIActionAlert | null>(null);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadAlerts = async () => {
+      try {
+        setLoadingAlerts(true);
+        const response = await fetchActionAlertsApi("/api/action-alerts", undefined, "/api/action-alerts");
+        if (!response.ok) {
+          throw new Error("Failed to load AI action alerts");
+        }
+
+        const data: AIActionAlertsResponse = await response.json();
+        if (!isActive) return;
+        setAlerts(data.data);
+      } catch (error) {
+        console.error("Error loading AI action alerts:", error);
+        if (isActive) {
+          setAlerts(legacyAlertCards);
+        }
+        toast.error("Failed to load AI Action Alerts", {
+          description: "Using fallback dashboard alerts.",
+        });
+      } finally {
+        if (isActive) {
+          setLoadingAlerts(false);
+        }
+      }
+    };
+
+    loadAlerts();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const visibleAlerts = executionAlert ? [executionAlert, ...alerts] : alerts;
+  const featuredAlerts = visibleAlerts.length > 0 ? visibleAlerts.slice(0, 2) : legacyAlertCards.slice(0, 2);
+  const sheetAlerts = visibleAlerts.length > 0 ? visibleAlerts : legacyAlertCards;
 
   const handleConfirmTransfer = () => {
     setTransferDialogOpen(false);
+    const shortage = selectedTransferAlert?.shortage ?? 500;
+    const productName = selectedTransferAlert?.productName ?? "Wireless Earbuds";
+    const warehouseName = selectedTransferAlert?.warehouseName ?? "Jakarta Hub";
+
+    setExecutionAlert({
+      id: `executed-${selectedTransferAlert?.id ?? "manual"}`,
+      severity: "success",
+      title: "Transfer Executed",
+      body: `Inventory routing initiated successfully — ${shortage} units for ${productName} from ${warehouseName}.`,
+      timeLabel: "Just now",
+      productName,
+      warehouseName,
+      shortage,
+      ctaLabel: "View Simulation",
+    });
+
     toast.success("Transfer initiated successfully", {
-      description: "Routing 500 units of Wireless Earbuds from Jakarta Hub.",
+      description: `Routing ${shortage} units of ${productName} from ${warehouseName}.`,
     });
   };
 
@@ -211,46 +263,120 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-4 flex-1">
-              {/* Alert 1 */}
-              <div className="border border-red-100 bg-red-50 rounded-lg p-4">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground text-sm">Impending Stockout</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">2m ago</p>
-                    <p className="text-sm text-foreground mt-2">
-                      Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.
-                    </p>
-                    <Button
-                      className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
-                      onClick={() => setTransferDialogOpen(true)}
-                    >
-                      Execute Transfer Now
-                    </Button>
-                  </div>
+              {loadingAlerts ? (
+                <div className="min-h-[260px] flex items-center justify-center rounded-2xl border border-dashed border-border bg-muted/20 text-sm text-muted-foreground">
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Loading AI alerts...
                 </div>
-              </div>
+              ) : featuredAlerts.length > 0 ? (
+                featuredAlerts.map((alert) => {
+                  const styles = alertCardStyle(alert.severity);
+                  return (
+                    <div key={alert.id} className={`rounded-2xl p-4 ${styles.wrapper}`}>
+                      <div className="flex gap-3">
+                        {styles.success ? (
+                          <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${styles.icon}`} />
+                        ) : (
+                          <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${styles.icon}`} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-4">
+                            <h3 className={`font-semibold text-sm ${styles.title}`}>{alert.title}</h3>
+                            <div className={`flex items-center gap-1 text-xs whitespace-nowrap ${styles.time}`}>
+                              <Clock className="w-3 h-3" />
+                              {alert.timeLabel}
+                            </div>
+                          </div>
+                          <p className={`text-sm mt-2 leading-6 ${styles.body}`}>{alert.body}</p>
+                          <Button
+                            className={`w-full mt-3 text-xs h-9 ${alert.severity === "critical" ? "bg-primary text-white hover:bg-orange-500" : ""}`}
+                            variant={styles.buttonVariant}
+                            onClick={() => {
+                              if (alert.recommendedAction === "Transfer" || alert.ctaLabel?.toLowerCase().includes("transfer")) {
+                                setSelectedTransferAlert(alert);
+                                setTransferDialogOpen(true);
+                                return;
+                              }
 
-              {/* Alert 2 */}
-              <div className="border border-yellow-100 bg-yellow-50 rounded-lg p-4">
-                <div className="flex gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-foreground text-sm">Demand Spike Detected</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">1h ago</p>
-                    <p className="text-sm text-foreground mt-2">
-                      ↑34% predicted demand for Smart Watches next week due to regional promotion.
-                    </p>
-                    <Button
-                      variant="outline"
-                      className="w-full mt-3 text-xs h-8"
-                      onClick={() => handleReviewSimulation("Smart Watches")}
+                              handleReviewSimulation(alert.productName ?? "Inventory");
+                            }}
+                          >
+                            {alert.ctaLabel ?? "View Simulation"}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              ) : (
+                legacyAlertCards.slice(0, 2).map((alert) => {
+                  const isRed = alert.severity === "critical";
+                  const isYellow = alert.severity === "warning";
+                  const isDark = alert.severity === "success";
+                  return (
+                    <div
+                      key={alert.id}
+                      className={`rounded-2xl p-4 border ${
+                        isRed
+                          ? "border-red-100 bg-red-50"
+                          : isYellow
+                            ? "border-yellow-100 bg-yellow-50"
+                            : "border-gray-700 bg-gray-900"
+                      }`}
                     >
-                      Review Simulation
-                    </Button>
-                  </div>
-                </div>
-              </div>
+                      <div className="flex gap-3">
+                        {isDark ? (
+                          <CheckCircle2 className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isRed ? "text-red-500" : "text-yellow-600"}`} />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-4">
+                            <h3 className={`font-semibold text-sm ${isDark ? "text-white" : "text-foreground"}`}>
+                              {alert.title}
+                            </h3>
+                            <div className={`flex items-center gap-1 text-xs whitespace-nowrap ${isDark ? "text-gray-500" : "text-muted-foreground"}`}>
+                              <Clock className="w-3 h-3" />
+                              {alert.timeLabel}
+                            </div>
+                          </div>
+                          <p className={`text-sm mt-2 leading-6 ${isDark ? "text-gray-300" : "text-foreground"}`}>
+                            {alert.body}
+                          </p>
+                          {alert.productName && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="mt-3 text-xs h-7"
+                              onClick={() => {
+                                if (alert.recommendedAction === "Transfer") {
+                                  setSelectedTransferAlert({
+                                    id: alert.id,
+                                    severity: "critical",
+                                    title: alert.title,
+                                    body: alert.body,
+                                    timeLabel: alert.timeLabel,
+                                    productName: alert.productName ?? "Wireless Earbuds",
+                                    sku: "4920",
+                                    warehouseName: alert.warehouseName ?? "Jakarta Hub",
+                                    shortage: alert.shortage ?? 500,
+                                    ctaLabel: "Execute Transfer Now",
+                                  });
+                                  setTransferDialogOpen(true);
+                                  return;
+                                }
+                                handleReviewSimulation(alert.productName!);
+                              }}
+                            >
+                              {alert.recommendedAction === "Transfer" ? "Execute Transfer Now" : "View Simulation"}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
 
             </div>
           </div>
@@ -267,14 +393,14 @@ export default function Dashboard() {
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <p className="text-sm font-semibold text-red-700">Impending Stockout</p>
               <p className="text-sm text-foreground mt-1">
-                Jakarta Warehouse will run out of Wireless Earbuds (SKU 4920) in 48 hours.
+                {selectedTransferAlert?.warehouseName ?? "Jakarta Hub"} will run out of {selectedTransferAlert?.productName ?? "Wireless Earbuds"} (SKU {selectedTransferAlert?.sku ?? "4920"}) unless the transfer is executed.
               </p>
             </div>
             <div className="space-y-2.5 text-sm">
               {[
-                ["Product",            "Wireless Earbuds"],
-                ["Transfer Amount",    "500 units"],
-                ["From",               "Jakarta Hub"],
+                ["Product",            selectedTransferAlert?.productName ?? "Wireless Earbuds"],
+                ["Transfer Amount",    `${Math.max(selectedTransferAlert?.shortage ?? 500, 1)} units`],
+                ["From",               selectedTransferAlert?.warehouseName ?? "Jakarta Hub"],
                 ["Estimated Arrival",  "2 days"],
               ].map(([label, val]) => (
                 <div key={label} className="flex justify-between">
@@ -284,7 +410,7 @@ export default function Dashboard() {
               ))}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Savings</span>
-                <span className="font-semibold text-green-600">Rp 1,500,000</span>
+                <span className="font-semibold text-green-600">Rp {Math.max(selectedTransferAlert?.shortage ?? 500, 1) * 3000}</span>
               </div>
             </div>
           </div>
@@ -305,48 +431,48 @@ export default function Dashboard() {
           </SheetHeader>
 
           <div className="space-y-4">
-            {allAlerts.map((alert) => {
-              const isRed    = alert.type === "critical";
-              const isYellow = alert.type === "warning";
-              const isDark   = alert.type === "success";
+            {sheetAlerts.map((alert) => {
+              const styles = alertCardStyle(alert.severity);
               return (
                 <div
                   key={alert.id}
-                  className={`rounded-lg p-4 border ${
-                    isRed    ? "border-red-100 bg-red-50" :
-                    isYellow ? "border-yellow-100 bg-yellow-50" :
-                               "border-gray-700 bg-gray-900"
-                  }`}
+                  className={`rounded-2xl p-4 border ${styles.wrapper}`}
                 >
                   <div className="flex gap-3">
-                    {isDark
-                      ? <CheckCircle2 className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
-                      : <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isRed ? "text-red-500" : "text-yellow-600"}`} />
+                    {styles.success
+                      ? <CheckCircle2 className={`w-5 h-5 flex-shrink-0 mt-0.5 ${styles.icon}`} />
+                      : <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${styles.icon}`} />
                     }
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <h3 className={`font-semibold text-sm ${isDark ? "text-white" : "text-foreground"}`}>
+                      <div className="flex items-start justify-between gap-4">
+                        <h3 className={`font-semibold text-sm ${styles.title}`}>
                           {alert.title}
                         </h3>
-                        <div className={`flex items-center gap-1 text-xs ${isDark ? "text-gray-500" : "text-muted-foreground"}`}>
+                        <div className={`flex items-center gap-1 text-xs whitespace-nowrap ${styles.time}`}>
                           <Clock className="w-3 h-3" />
-                          {alert.time}
+                          {alert.timeLabel}
                         </div>
                       </div>
-                      <p className={`text-sm mt-1.5 ${isDark ? "text-gray-300" : "text-foreground"}`}>
+                      <p className={`text-sm mt-2 leading-6 ${styles.body}`}>
                         {alert.body}
                       </p>
-                      {alert.product && (
+                      {alert.productName && (
                         <Button
                           size="sm"
                           variant="outline"
                           className="mt-3 text-xs h-7"
                           onClick={() => {
                             setViewAllOpen(false);
-                            handleReviewSimulation(alert.product!);
+                            if (alert.recommendedAction === "Transfer") {
+                              setSelectedTransferAlert(alert);
+                              setTransferDialogOpen(true);
+                              return;
+                            }
+
+                            handleReviewSimulation(alert.productName!);
                           }}
                         >
-                          View Simulation
+                          {alert.ctaLabel ?? "View Simulation"}
                         </Button>
                       )}
                     </div>
