@@ -31,6 +31,7 @@ interface DashboardAlert {
   body: string;
   time: string;
   product: string | null;
+  warehouse: string | null;
 }
 
 function formatCurrency(value: number): string {
@@ -55,6 +56,7 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       body: `${warehouseName} has only ${i.current_stock} units of ${productName} remaining (shortage of ${i.shortage}).`,
       time: `${(idx + 1) * 2}m ago`,
       product: productName,
+      warehouse: warehouseName,
     });
   });
 
@@ -73,6 +75,7 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       body: `${warehouseName} is holding ${i.current_stock.toLocaleString()} units of ${productName} — capital is locked.`,
       time: `${(idx + 1) * 30}m ago`,
       product: productName,
+      warehouse: warehouseName,
     });
   });
 
@@ -83,6 +86,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [viewAllOpen, setViewAllOpen] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState<DashboardAlert | null>(null);
   const [inventory, setInventory] = useState<Inventory[]>([]);
 
   useEffect(() => {
@@ -307,7 +311,10 @@ export default function Dashboard() {
                         {isCritical ? (
                           <Button
                             className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
-                            onClick={() => setTransferDialogOpen(true)}
+                            onClick={() => {
+                              setSelectedAlert(alert);
+                              setTransferDialogOpen(true);
+                            }}
                           >
                             Execute Transfer Now
                           </Button>
@@ -339,16 +346,20 @@ export default function Dashboard() {
             <DialogTitle>Confirm Stock Transfer</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {topAlerts[0] && topAlerts[0].type === "critical" ? (
+            {selectedAlert && selectedAlert.type === "critical" ? (
               <>
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <p className="text-sm font-semibold text-red-700">{topAlerts[0].title}</p>
-                  <p className="text-sm text-foreground mt-1">{topAlerts[0].body}</p>
+                  <p className="text-sm font-semibold text-red-700">{selectedAlert.title}</p>
+                  <p className="text-sm text-foreground mt-1">{selectedAlert.body}</p>
                 </div>
                 <div className="space-y-2.5 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Product</span>
-                    <span className="font-semibold">{topAlerts[0].product ?? "-"}</span>
+                    <span className="font-semibold">{selectedAlert.product ?? "-"}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Warehouse</span>
+                    <span className="font-semibold">{selectedAlert.warehouse ?? "-"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Estimated Arrival</span>
@@ -370,8 +381,8 @@ export default function Dashboard() {
       </Dialog>
 
       {/* ── View All Alerts Sheet ── */}
-      <Sheet open={viewAllOpen} onOpenChange={setViewAllOpen}>
-        <SheetContent side="right" className="w-[420px] sm:w-[480px] overflow-y-auto">
+        <Sheet open={viewAllOpen} onOpenChange={setViewAllOpen}>
+        <SheetContent side="right" className="w-[420px] sm:w-[480px] overflow-y-auto bg-white text-foreground">
           <SheetHeader className="mb-6">
             <SheetTitle>All AI Action Alerts</SheetTitle>
           </SheetHeader>
@@ -387,39 +398,53 @@ export default function Dashboard() {
                   className={`rounded-lg p-4 border ${
                     isRed    ? "border-red-100 bg-red-50" :
                     isYellow ? "border-yellow-100 bg-yellow-50" :
-                               "border-gray-700 bg-gray-900"
+                               "border-green-100 bg-green-50"
                   }`}
                 >
                   <div className="flex gap-3">
                     {isDark
-                      ? <CheckCircle2 className="w-5 h-5 text-gray-400 flex-shrink-0 mt-0.5" />
+                      ? <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
                       : <AlertCircle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${isRed ? "text-red-500" : "text-yellow-600"}`} />
                     }
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <h3 className={`font-semibold text-sm ${isDark ? "text-white" : "text-foreground"}`}>
+                        <h3 className={`font-semibold text-sm ${isDark ? "text-foreground" : "text-foreground"}`}>
                           {alert.title}
                         </h3>
-                        <div className={`flex items-center gap-1 text-xs ${isDark ? "text-gray-500" : "text-muted-foreground"}`}>
+                        <div className={`flex items-center gap-1 text-xs ${isDark ? "text-muted-foreground" : "text-muted-foreground"}`}>
                           <Clock className="w-3 h-3" />
                           {alert.time}
                         </div>
                       </div>
-                      <p className={`text-sm mt-1.5 ${isDark ? "text-gray-300" : "text-foreground"}`}>
+                      <p className={`text-sm mt-1.5 ${isDark ? "text-foreground" : "text-foreground"}`}>
                         {alert.body}
                       </p>
-                      {alert.product && (
+                      {isRed ? (
                         <Button
                           size="sm"
-                          variant="outline"
-                          className="mt-3 text-xs h-7"
+                          className="mt-3 text-xs h-7 w-full bg-primary text-white"
                           onClick={() => {
                             setViewAllOpen(false);
-                            handleReviewSimulation(alert.product!);
+                            setSelectedAlert(alert);
+                            setTransferDialogOpen(true);
                           }}
                         >
-                          View Simulation
+                          Execute Transfer Now
                         </Button>
+                      ) : (
+                        alert.product && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="mt-3 text-xs h-7"
+                            onClick={() => {
+                              setViewAllOpen(false);
+                              handleReviewSimulation(alert.product!);
+                            }}
+                          >
+                            Review Simulation
+                          </Button>
+                        )
                       )}
                     </div>
                   </div>

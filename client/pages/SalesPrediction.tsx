@@ -232,42 +232,7 @@ export default function SalesPrediction() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* External Variables */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col">
-            <div className="flex items-center gap-3 mb-6">
-              <div className="w-8 h-8 bg-purple-200 rounded-lg flex items-center justify-center text-purple-700 font-bold text-sm">
-                ⚙️
-              </div>
-              <h2 className="text-lg font-bold text-foreground">External Variables</h2>
-            </div>
-
-            <div className="space-y-5 flex-1">
-              <div>
-                <label className="block text-sm font-semibold text-foreground mb-2">Month</label>
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="w-full px-3 py-2 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {MONTH_OPTIONS.map((m) => (
-                    <option key={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-xs text-muted-foreground flex gap-2">
-                  <span className="text-primary font-bold">ℹ️</span>
-                  <span>
-                    Comparing {HISTORICAL_YEAR} (historical) with {PREDICTED_YEAR} (AI projection).
-                    Marketing campaign effects are baked into the trained model.
-                  </span>
-                </p>
-              </div>
-            </div>
-          </div>
-
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Chart */}
           <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-border">
             <div className="flex items-center justify-between mb-2">
@@ -279,15 +244,27 @@ export default function SalesPrediction() {
                   </span>
                 )}
               </h2>
-              <select
-                value={selectedProductName}
-                onChange={(e) => setSelectedProductName(e.target.value)}
-                className="px-3 py-1.5 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                disabled={loading || productList.length === 0}
-              >
-                {productList.length === 0 && <option>Loading...</option>}
-                {productList.map((p) => <option key={p}>{p}</option>)}
-              </select>
+              <div className="flex items-center gap-3">
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="px-3 py-1.5 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  {MONTH_OPTIONS.map((m) => (
+                    <option key={m}>{m}</option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedProductName}
+                  onChange={(e) => setSelectedProductName(e.target.value)}
+                  className="px-3 py-1.5 border border-border rounded-lg bg-white text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={loading || productList.length === 0}
+                >
+                  {productList.length === 0 && <option>Loading...</option>}
+                  {productList.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </div>
             </div>
 
             <div className="flex items-center gap-6 mb-4 mt-2">
@@ -305,7 +282,7 @@ export default function SalesPrediction() {
               </div>
             </div>
 
-            <ResponsiveContainer width="100%" height={360}>
+            <ResponsiveContainer width="100%" height={480}>
               <LineChart data={chartData} margin={{ top: 36, right: 24, left: 20, bottom: 45 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
 
