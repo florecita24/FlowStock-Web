@@ -69,6 +69,12 @@ interface ForecastInsight {
   recommended_action: string;
 }
 
+/** Extended insight from /forecast/ai-insight (LLM-powered) */
+interface AIInsight extends ForecastInsight {
+  bullets: string[];
+  source: "llm" | "rule-based";
+}
+
 interface WeeklyPoint  { week: string; predicted_sales: number; }
 interface DailyPoint   { date: string; sales: number; }
 interface ForecastResponse {
@@ -212,10 +218,12 @@ export default function SalesPrediction() {
 
   // State
   const [isLoading,        setIsLoading]        = useState(false);
+  const [isInsightLoading, setIsInsightLoading] = useState(false);
   const [hasRun,           setHasRun]           = useState(false);
   const [chartData,        setChartData]        = useState<ChartPoint[]>([]);
   const [metrics,          setMetrics]          = useState<ForecastMetrics | null>(null);
   const [insight,          setInsight]          = useState<ForecastInsight | null>(null);
+  const [aiInsight,        setAIInsight]        = useState<AIInsight | null>(null);
   const [cutoffWeek,       setCutoffWeek]       = useState<string | null>(null);
   const [historyEntries,   setHistoryEntries]   = useState<HistoryEntry[]>([]);
   const [historyOpen,      setHistoryOpen]      = useState(false);
@@ -284,10 +292,32 @@ export default function SalesPrediction() {
       setChartData(buildChartData(histWeekly, forecastWk));
       setMetrics(data.metrics);
       setInsight(data.insight);
+      setAIInsight(null);   // clear previous while new LLM insight loads
       setHasRun(true);
 
       // Refresh history list
       fetchHistory();
+
+      // ── Fire /forecast/ai-insight in background (LLM may be slow) ──
+      setIsInsightLoading(true);
+      const { store: s, item: it } = productMap[selectedProduct] ?? { store: 1, item: 1 };
+      fetch(`${BACKEND_URL}/forecast/ai-insight`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          store: s,
+          item: it,
+          weekly_forecast: data.weekly_forecast,
+          historical: data.historical,
+          metrics: data.metrics,
+          peak_week: data.insight.peak_week,
+          peak_sales: data.insight.peak_sales,
+        }),
+      })
+        .then((r) => r.json())
+        .then((ai: AIInsight) => setAIInsight(ai))
+        .catch(() => { /* keep fallback insight visible */ })
+        .finally(() => setIsInsightLoading(false));
     } catch (err) {
       toast.error("Forecast failed", { description: String(err) });
     } finally {
@@ -684,26 +714,69 @@ export default function SalesPrediction() {
                 <Lightbulb className="w-6 h-6 text-pink-600" />
               </div>
               <div className="flex-1">
-                <div className="flex items-center gap-3 mb-3">
+                {/* Header row */}
+                <div className="flex items-center gap-3 mb-3 flex-wrap">
                   <h3 className="font-bold text-foreground">AI Insight</h3>
-                  <RiskBadge risk={insight.stockout_risk} />
+                  <RiskBadge risk={(aiInsight ?? insight).stockout_risk} />
+                  {/* Source badge — shown once AI insight resolves */}
+                  {aiInsight && (
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      aiInsight.source === "llm"
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-gray-100 text-gray-600"
+                    }`}>
+                      {aiInsight.source === "llm" ? "✨ AI-Generated" : "⚙️ Rule-Based"}
+                    </span>
+                  )}
+                  {isInsightLoading && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <Loader2 className="w-3 h-3 animate-spin" /> Generating AI analysis…
+                    </span>
+                  )}
                 </div>
 
-                <p className="text-sm text-muted-foreground leading-relaxed mb-4">{insight.summary}</p>
+                {/* Summary text */}
+                <p className="text-sm text-muted-foreground leading-relaxed mb-4">
+                  {(aiInsight ?? insight).summary}
+                </p>
 
+                {/* LLM bullets — only shown when ai-insight has returned */}
+                {aiInsight?.bullets && aiInsight.bullets.length > 0 && (
+                  <ul className="space-y-1.5 mb-4">
+                    {aiInsight.bullets.map((b, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                        <span className="mt-0.5 text-primary font-bold flex-shrink-0">•</span>
+                        <span>{b.replace(/^[•\-]\s*/, "")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Bullet skeleton while loading */}
+                {isInsightLoading && !aiInsight && (
+                  <div className="space-y-2 mb-4">
+                    {["w-3/4", "w-5/6", "w-2/3"].map((w, i) => (
+                      <div key={i} className={`h-3.5 bg-muted animate-pulse rounded ${w}`} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Info cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="bg-muted/40 rounded-lg p-3">
                     <p className="text-xs text-muted-foreground mb-1">📈 Peak Week</p>
-                    <p className="text-sm font-semibold text-foreground">{insight.peak_week}</p>
-                    <p className="text-xs text-green-600 font-bold">{insight.peak_sales.toLocaleString(undefined, { maximumFractionDigits: 0 })} units</p>
+                    <p className="text-sm font-semibold text-foreground">{(aiInsight ?? insight).peak_week}</p>
+                    <p className="text-xs text-green-600 font-bold">
+                      {(aiInsight ?? insight).peak_sales.toLocaleString(undefined, { maximumFractionDigits: 0 })} units
+                    </p>
                   </div>
                   <div className="bg-muted/40 rounded-lg p-3">
                     <p className="text-xs text-muted-foreground mb-1">🔒 Safety Stock</p>
-                    <p className="text-sm font-semibold text-foreground">{insight.recommended_safety_stock}</p>
+                    <p className="text-sm font-semibold text-foreground">{(aiInsight ?? insight).recommended_safety_stock}</p>
                   </div>
                   <div className="bg-muted/40 rounded-lg p-3">
                     <p className="text-xs text-muted-foreground mb-1">🚀 Recommended Action</p>
-                    <p className="text-sm font-semibold text-foreground">{insight.recommended_action}</p>
+                    <p className="text-sm font-semibold text-foreground">{(aiInsight ?? insight).recommended_action}</p>
                   </div>
                 </div>
               </div>
