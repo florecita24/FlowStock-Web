@@ -2,8 +2,40 @@ import { RequestHandler } from "express";
 import { supabase } from "../lib/supabase";
 import { ListResponse, Inventory } from "@shared/api";
 
+const FLOWSTOCK_AI_BASE_URL =
+  process.env.FLOWSTOCK_AI_BASE_URL?.trim() || "https://fhatikaadr-flowstock-ai-1.hf.space";
+
+async function syncInventoryWithFlowStockAI() {
+  const url = `${FLOWSTOCK_AI_BASE_URL.replace(/\/$/, "")}/api/sync-inventory`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.warn(
+        `FlowStock AI sync failed (${response.status}): ${body.slice(0, 240)}`
+      );
+    }
+  } catch (error) {
+    console.warn("FlowStock AI sync unavailable:", error);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 export const getInventory: RequestHandler = async (req, res) => {
   try {
+    await syncInventoryWithFlowStockAI();
+
     const { data, error, count } = await supabase
       .from("inventory")
       .select(
