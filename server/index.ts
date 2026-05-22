@@ -19,6 +19,7 @@ import {
   getStoreSales,
   getStoreSalesByWarehouse,
   getStoreSalesByDateRange,
+  getWeeklySalesByProduct,
 } from "./routes/store-sales";
 
 export function createServer() {
@@ -54,6 +55,7 @@ export function createServer() {
   app.get("/api/store-sales", getStoreSales);
   app.get("/api/store-sales/warehouse/:warehouseId", getStoreSalesByWarehouse);
   app.get("/api/store-sales/date-range", getStoreSalesByDateRange);
+  app.get("/api/store-sales/weekly/product/:productId", getWeeklySalesByProduct);
 
   return app;
 }

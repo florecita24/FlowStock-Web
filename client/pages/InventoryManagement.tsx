@@ -101,7 +101,7 @@ function AIRecommendationPanel({ item, onApprove, onSupplier, onClose }: {
 }) {
   return (
     <tr>
-      <td colSpan={9} className="px-4 pb-4 bg-orange-50/50">
+      <td colSpan={10} className="px-4 pb-4 bg-orange-50/50">
         <div className="border border-orange-200 rounded-xl p-5 bg-white shadow-sm mt-1">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
@@ -332,7 +332,7 @@ export default function InventoryManagement() {
   });
 
   // ── Pagination ──
-  const ROWS_PER_PAGE = 25;
+  const ROWS_PER_PAGE = 15;
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(filtered.length / ROWS_PER_PAGE));
 
@@ -389,6 +389,7 @@ export default function InventoryManagement() {
               <thead>
                 <tr className="border-b border-border bg-muted/30">
                   <th className="text-left py-3 px-5 font-semibold text-foreground whitespace-nowrap">Product Name</th>
+                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Warehouse</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Current Stock</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Predicted Demand (4 days)</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Price</th>
@@ -402,21 +403,21 @@ export default function InventoryManagement() {
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                    <td colSpan={10} className="py-8 text-center text-muted-foreground">
                       Loading inventory data...
                     </td>
                   </tr>
                 )}
                 {fetchError && !loading && (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-red-600">
+                    <td colSpan={10} className="py-8 text-center text-red-600">
                       Failed to load: {fetchError}
                     </td>
                   </tr>
                 )}
                 {!loading && !fetchError && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                    <td colSpan={10} className="py-8 text-center text-muted-foreground">
                       No inventory items found.
                     </td>
                   </tr>
@@ -431,6 +432,9 @@ export default function InventoryManagement() {
                       )}
                     >
                       <td className="py-4 px-5 font-semibold text-foreground">{item.name}</td>
+                      <td className="py-4 px-4 text-foreground whitespace-nowrap capitalize">
+                        {item.warehouse || "-"}
+                      </td>
                       <td className="py-4 px-4 font-bold text-foreground">{item.currentStock}</td>
                       <td className="py-4 px-4">
                         <p className={cn("font-medium", item.shortage ? "text-red-600" : "text-foreground")}>

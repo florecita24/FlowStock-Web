@@ -1,13 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import Layout from "@/components/Layout";
 import { Lightbulb } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine, Label,
 } from "recharts";
-import type { ListResponse, Product, StoreSales } from "@shared/api";
+import type { ListResponse, Product } from "@shared/api";
+
+interface WeeklySalesResponse {
+  productId: number;
+  year: number;
+  totalRows: number;
+  weeklyBuckets: Record<string, number>; // key: "month-weekIdx"
+}
+
+// Simulated "current year" — dataset covers 2013-2018, treating 2018 as today
+const CURRENT_YEAR = 2018;
 
 interface QuarterDef {
   label: string;
@@ -15,10 +24,10 @@ interface QuarterDef {
 }
 
 const QUARTERS: QuarterDef[] = [
-  { label: "Jan - Mar",  months: [0, 1, 2] },
-  { label: "Apr - Jun",  months: [3, 4, 5] },
-  { label: "Jul - Sept", months: [6, 7, 8] },
-  { label: "Oct - Des",  months: [9, 10, 11] },
+  { label: "Q1 (Jan - Mar)",  months: [0, 1, 2] },
+  { label: "Q2 (Apr - Jun)",  months: [3, 4, 5] },
+  { label: "Q3 (Jul - Sept)", months: [6, 7, 8] },
+  { label: "Q4 (Oct - Des)",  months: [9, 10, 11] },
 ];
 
 const MONTH_SHORT = [
@@ -35,29 +44,19 @@ function buildQuarterWeekLabels(quarterLabel: string): string[] {
   return labels;
 }
 
-// Aggregate raw store_sales rows into 12 weekly buckets per quarter for a product
-function aggregateWeeklySales(
-  sales: StoreSales[],
-  productId: number,
+// Build 12 weekly values for a given quarter from pre-aggregated buckets returned by server
+function buildQuarterValues(
+  buckets: Record<string, number>,
   quarterLabel: string
 ): number[] {
   const q = QUARTERS.find((x) => x.label === quarterLabel) ?? QUARTERS[0];
-  const buckets = Array(12).fill(0);
-
-  sales
-    .filter((s) => s.item === productId)
-    .forEach((s) => {
-      const d = new Date(s.date);
-      if (isNaN(d.getTime())) return;
-      const month = d.getMonth();
-      const monthIdx = q.months.indexOf(month);
-      if (monthIdx === -1) return;
-      const day = d.getDate();
-      const weekIdx = Math.min(3, Math.floor((day - 1) / 7));
-      buckets[monthIdx * 4 + weekIdx] += s.sales || 0;
-    });
-
-  return buckets;
+  const values: number[] = [];
+  q.months.forEach((month) => {
+    for (let weekIdx = 0; weekIdx < 4; weekIdx++) {
+      values.push(buckets[`${month}-${weekIdx}`] || 0);
+    }
+  });
+  return values;
 }
 
 const CUTOFF = 6;
@@ -79,35 +78,32 @@ export default function SalesPrediction() {
   const initialProduct = (location.state as any)?.selectedProduct ?? "";
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [sales, setSales] = useState<StoreSales[]>([]);
+  const [weeklyBuckets, setWeeklyBuckets] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(false);
   const [selectedProductName, setSelectedProductName] = useState<string>(initialProduct);
-  const [variables, setVariables] = useState({ kuartal: "Jan - Mar", marketing: "Payday Sale" });
+  const [variables, setVariables] = useState({ kuartal: "Q1 (Jan - Mar)", marketing: "Payday Sale" });
 
+  // Fetch products list once
   useEffect(() => {
     let cancelled = false;
-    async function fetchData() {
+    async function fetchProducts() {
       try {
-        const [pRes, sRes] = await Promise.all([
-          fetch("/api/products"),
-          fetch("/api/store-sales"),
-        ]);
-        if (!pRes.ok || !sRes.ok) throw new Error("Failed to fetch sales data");
-        const pJson: ListResponse<Product> = await pRes.json();
-        const sJson: ListResponse<StoreSales> = await sRes.json();
+        const res = await fetch("/api/products");
+        if (!res.ok) throw new Error("Failed to fetch products");
+        const json: ListResponse<Product> = await res.json();
         if (cancelled) return;
-        setProducts(pJson.data);
-        setSales(sJson.data);
-        if (!selectedProductName && pJson.data[0]) {
-          setSelectedProductName(pJson.data[0].name);
+        setProducts(json.data);
+        if (!selectedProductName && json.data[0]) {
+          setSelectedProductName(json.data[0].name);
         }
       } catch (err) {
-        console.error("SalesPrediction fetch error:", err);
+        console.error("SalesPrediction products fetch error:", err);
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-    fetchData();
+    fetchProducts();
     return () => {
       cancelled = true;
     };
@@ -119,15 +115,40 @@ export default function SalesPrediction() {
     [products, selectedProductName]
   );
 
+  // Fetch weekly aggregated sales whenever selected product changes
+  useEffect(() => {
+    if (!selectedProduct) return;
+    let cancelled = false;
+    async function fetchWeekly() {
+      try {
+        setChartLoading(true);
+        const res = await fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${CURRENT_YEAR}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: WeeklySalesResponse = await res.json();
+        if (cancelled) return;
+        setWeeklyBuckets(json.weeklyBuckets || {});
+      } catch (err) {
+        console.error("Weekly sales fetch error:", err);
+        if (!cancelled) setWeeklyBuckets({});
+      } finally {
+        if (!cancelled) setChartLoading(false);
+      }
+    }
+    fetchWeekly();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProduct?.id]);
+
   const weekLabels = useMemo(
     () => buildQuarterWeekLabels(variables.kuartal),
     [variables.kuartal]
   );
 
-  const values = useMemo(() => {
-    if (!selectedProduct) return [];
-    return aggregateWeeklySales(sales, selectedProduct.id, variables.kuartal);
-  }, [sales, selectedProduct, variables.kuartal]);
+  const values = useMemo(
+    () => buildQuarterValues(weeklyBuckets, variables.kuartal),
+    [weeklyBuckets, variables.kuartal]
+  );
 
   const chartData = useMemo(
     () =>
@@ -199,17 +220,18 @@ export default function SalesPrediction() {
                 </p>
               </div>
             </div>
-
-            <div className="mt-6 pt-4 border-t border-border">
-              <Button className="w-full bg-primary text-primary-foreground">Run Simulation</Button>
-            </div>
           </div>
 
           {/* Chart */}
           <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-border">
             <div className="flex items-center justify-between mb-2">
               <h2 className="text-lg font-bold text-foreground">
-                Sales Projection (1 Quarter — {variables.kuartal})
+                Sales Projection — {variables.kuartal} {CURRENT_YEAR}
+                {chartLoading && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    Loading...
+                  </span>
+                )}
               </h2>
               <select
                 value={selectedProductName}
