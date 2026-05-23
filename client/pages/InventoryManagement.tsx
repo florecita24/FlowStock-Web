@@ -283,6 +283,88 @@ function mapInventoryRow(row: Inventory): InventoryItem {
 
 const statuses = ["All Statuses", "Critical", "Healthy", "Overstock"];
 
+type ActionKind = "transfer" | "order" | "discount" | "monitor";
+
+function detectActionKind(action: string): ActionKind {
+  const a = (action || "").toLowerCase();
+  if (a.includes("transfer")) return "transfer";
+  if (a.includes("order")) return "order";
+  if (a.includes("discount")) return "discount";
+  return "monitor";
+}
+
+interface ActionButtonConfig {
+  bestLabel: string;
+  altLabel: string;
+  bestToast: { title: string; description: (item: InventoryItem) => string };
+  altToast: { title: string; description: (item: InventoryItem) => string };
+}
+
+function getActionConfig(action: string): ActionButtonConfig {
+  const kind = detectActionKind(action);
+
+  const CONFIGS: Record<ActionKind, ActionButtonConfig> = {
+    transfer: {
+      bestLabel: "✓ Approve Transfer",
+      altLabel: "Order from Supplier",
+      bestToast: {
+        title: "Stock transfer initiated",
+        description: (item) =>
+          `${item.shortage ?? 0} units of ${item.name} are being routed to ${item.warehouse}.`,
+      },
+      altToast: {
+        title: "Supplier order placed",
+        description: (item) =>
+          `Purchase order for ${item.shortage ?? 0} units of ${item.name} sent to supplier.`,
+      },
+    },
+    order: {
+      bestLabel: "✓ Place Supplier Order",
+      altLabel: "Request Internal Transfer",
+      bestToast: {
+        title: "Supplier order placed",
+        description: (item) =>
+          `Purchase order for ${item.shortage ?? 0} units of ${item.name} sent to supplier.`,
+      },
+      altToast: {
+        title: "Transfer requested",
+        description: (item) =>
+          `Stock transfer of ${item.name} requested from nearest hub.`,
+      },
+    },
+    discount: {
+      bestLabel: "✓ Launch Discount Campaign",
+      altLabel: "Hold & Monitor",
+      bestToast: {
+        title: "Discount campaign launched",
+        description: (item) =>
+          `Promotional discount applied to ${item.name} in ${item.warehouse}.`,
+      },
+      altToast: {
+        title: "Hold position",
+        description: (item) =>
+          `${item.name} will be re-evaluated in the next demand cycle.`,
+      },
+    },
+    monitor: {
+      bestLabel: "✓ Continue Monitoring",
+      altLabel: "Flag for Manual Review",
+      bestToast: {
+        title: "Monitoring continued",
+        description: (item) =>
+          `${item.name} remains under automated watch.`,
+      },
+      altToast: {
+        title: "Flagged for review",
+        description: (item) =>
+          `${item.name} sent to the operations team for manual inspection.`,
+      },
+    },
+  };
+
+  return CONFIGS[kind];
+}
+
 function statusColor(s: string) {
   if (s === "Critical")  return "bg-red-100 text-red-700";
   if (s === "Overstock") return "bg-orange-100 text-orange-700";
@@ -524,12 +606,28 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
           )}
 
           {/* Action Footer */}
-          <div className="flex justify-end gap-2.5 mt-5 pt-4 border-t border-gray-100">
-            <Button variant="outline" size="sm" className="text-xs h-8" onClick={onClose}>Cancel</Button>
-            <Button size="sm" className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 font-medium shadow-sm transition-colors" onClick={onApprove}>
-              Approve Best Option
-            </Button>
-          </div>
+          {(() => {
+            const config = getActionConfig(action);
+            return (
+              <div className="flex justify-end gap-2.5 mt-5 pt-4 border-t border-gray-100 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-8 border-gray-300 hover:bg-gray-50"
+                  onClick={onSupplier}
+                >
+                  {config.altLabel}
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 font-medium shadow-sm transition-colors"
+                  onClick={onApprove}
+                >
+                  {config.bestLabel}
+                </Button>
+              </div>
+            );
+          })()}
 
         </div>
       </td>
@@ -783,14 +881,19 @@ export default function InventoryManagement() {
 
   const handleApprove = (item: InventoryItem) => {
     setOpenSolution(null);
-    toast.success("Transfer approved!", {
-      description: `500 units of ${item.name} are being routed from Jakarta Hub.`,
+    const action = solutionData[item.id]?.recommended_action ?? item.recommendedAction;
+    const config = getActionConfig(action);
+    toast.success(config.bestToast.title, {
+      description: config.bestToast.description(item),
     });
   };
 
   const handleSupplier = (item: InventoryItem) => {
-    toast.info("Order placed with supplier", {
-      description: `Purchase order for ${item.name} sent to Indostationery Ltd.`,
+    setOpenSolution(null);
+    const action = solutionData[item.id]?.recommended_action ?? item.recommendedAction;
+    const config = getActionConfig(action);
+    toast.info(config.altToast.title, {
+      description: config.altToast.description(item),
     });
   };
 
@@ -871,7 +974,7 @@ export default function InventoryManagement() {
                   <th className="text-left py-3 px-5 font-semibold text-foreground whitespace-nowrap">Product Name</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Warehouse</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Current Stock</th>
-                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Predicted Demand (4 days)</th>
+                  <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Predicted Demand (14 days)</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Price</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Weight</th>
                   <th className="text-left py-3 px-4 font-semibold text-foreground whitespace-nowrap">Expiry Date</th>
