@@ -16,6 +16,68 @@ interface WeeklySalesResponse {
   dailyBuckets: Record<string, number>;  // key: "month-day" (day = 1-31)
 }
 
+// Forecast API (sales prediction)
+const FORECAST_API_BASE_URL =
+  import.meta.env.VITE_SALES_FORECAST_BASE_URL?.trim() ||
+  "https://naraurst-sales-prediction.hf.space";
+
+interface ForecastDataPoint {
+  date: string;
+  predicted_sales: number;
+}
+
+interface WeeklyForecastPoint {
+  week: string;
+  predicted_sales: number;
+}
+
+interface HistoricalDataPoint {
+  date: string;
+  sales: number;
+}
+
+interface ForecastMetrics {
+  mae: number;
+  mse: number;
+  rmse: number;
+  medae: number;
+  mape: number;
+  smape: number;
+  r2: number;
+  evs: number;
+}
+
+interface ForecastInsight {
+  summary: string;
+  stockout_risk: string;
+  peak_week: string | null;
+  peak_sales: number | null;
+  recommended_safety_stock: string;
+  recommended_action: string;
+  bullets: string[] | null;
+}
+
+interface ForecastResponse {
+  status: string;
+  selected_model: string;
+  metrics: ForecastMetrics;
+  forecast: ForecastDataPoint[];
+  weekly_forecast: WeeklyForecastPoint[];
+  historical: HistoricalDataPoint[];
+  insight: ForecastInsight;
+}
+
+interface AIInsightResponse {
+  summary: string;
+  stockout_risk: string;
+  peak_week: string | null;
+  peak_sales: number | null;
+  recommended_safety_stock: string;
+  recommended_action: string;
+  bullets: string[];
+  source: string;
+}
+
 // Days in each month (non-leap year, since 2017 & 2018 are not leap years)
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
@@ -126,6 +188,12 @@ export default function SalesPrediction() {
   const [selectedProductName, setSelectedProductName] = useState<string>(initialProduct);
   const [selectedMonth, setSelectedMonth] = useState<string>("All months");
 
+  // AI Forecast & Insight state (from naraurst-sales-prediction API)
+  const [forecastMetrics, setForecastMetrics] = useState<ForecastMetrics | null>(null);
+  const [aiInsight, setAiInsight] = useState<AIInsightResponse | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState<string | null>(null);
+
   // Fetch products list once
   useEffect(() => {
     let cancelled = false;
@@ -157,38 +225,119 @@ export default function SalesPrediction() {
     [products, selectedProductName]
   );
 
-  // Fetch both historical and predicted year buckets in parallel when product changes
+  // Fetch historical (2017 from Supabase) + AI forecast (from /forecast/run) in parallel.
+  // AI Insight (/forecast/ai-insight) is fetched after we have the weekly forecast.
   useEffect(() => {
     if (!selectedProduct) return;
     let cancelled = false;
-    async function fetchWeekly() {
+
+    async function runForecast(productId: number): Promise<ForecastResponse> {
+      const r = await fetch(`${FORECAST_API_BASE_URL}/forecast/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item: productId,
+          model: "xgboost",
+          forecast_period_days: 365,
+        }),
+      });
+      if (!r.ok) {
+        const errJson = await r.json().catch(() => ({}));
+        throw new Error(errJson.detail || `Forecast HTTP ${r.status}`);
+      }
+      return await r.json();
+    }
+
+    async function fetchAll() {
       try {
         setChartLoading(true);
-        const [histRes, predRes] = await Promise.all([
+        setInsightLoading(true);
+        setInsightError(null);
+
+        const [histRes, forecastJson] = await Promise.all([
           fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${HISTORICAL_YEAR}`),
-          fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${PREDICTED_YEAR}`),
+          runForecast(selectedProduct!.id),
         ]);
-        if (!histRes.ok || !predRes.ok) throw new Error("Failed to fetch weekly sales");
+
+        if (!histRes.ok) throw new Error(`Historical fetch failed: HTTP ${histRes.status}`);
+
         const histJson: WeeklySalesResponse = await histRes.json();
-        const predJson: WeeklySalesResponse = await predRes.json();
         if (cancelled) return;
+
         setHistWeekly(histJson.weeklyBuckets || {});
-        setPredWeekly(predJson.weeklyBuckets || {});
         setHistDaily(histJson.dailyBuckets || {});
-        setPredDaily(predJson.dailyBuckets || {});
+        setForecastMetrics(forecastJson.metrics ?? null);
+
+        // Convert AI forecast (daily date points) into our bucket format
+        const predWeeklyBuckets: Record<string, number> = {};
+        const predDailyBuckets: Record<string, number> = {};
+        for (const pt of forecastJson.forecast || []) {
+          const d = new Date(pt.date);
+          if (isNaN(d.getTime())) continue;
+          const month = d.getMonth();
+          const day = d.getDate();
+          const weekIdx = Math.min(3, Math.floor((day - 1) / 7));
+          const weeklyKey = `${month}-${weekIdx}`;
+          const dailyKey = `${month}-${day}`;
+          predWeeklyBuckets[weeklyKey] = (predWeeklyBuckets[weeklyKey] || 0) + (pt.predicted_sales || 0);
+          predDailyBuckets[dailyKey] = (predDailyBuckets[dailyKey] || 0) + (pt.predicted_sales || 0);
+        }
+        setPredWeekly(predWeeklyBuckets);
+        setPredDaily(predDailyBuckets);
+
+        // Trigger LLM insight call now that we have weekly forecast data
+        fetch(`${FORECAST_API_BASE_URL}/forecast/ai-insight`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            item: selectedProduct!.id,
+            weekly_forecast: forecastJson.weekly_forecast || [],
+            historical: forecastJson.historical || [],
+            metrics: forecastJson.metrics,
+            peak_week: forecastJson.insight?.peak_week,
+            peak_sales: forecastJson.insight?.peak_sales,
+          }),
+        })
+          .then((r) => {
+            if (!r.ok) throw new Error(`AI insight HTTP ${r.status}`);
+            return r.json();
+          })
+          .then((insight: AIInsightResponse) => {
+            if (cancelled) return;
+            setAiInsight(insight);
+          })
+          .catch((err) => {
+            if (cancelled) return;
+            console.error("AI insight fetch error:", err);
+            // Fallback: use rule-based insight from /forecast/run
+            const fallback: AIInsightResponse = {
+              ...forecastJson.insight,
+              bullets: forecastJson.insight.bullets || [],
+              source: "fallback",
+            };
+            setAiInsight(fallback);
+            setInsightError(err instanceof Error ? err.message : String(err));
+          })
+          .finally(() => {
+            if (!cancelled) setInsightLoading(false);
+          });
       } catch (err) {
-        console.error("Weekly sales fetch error:", err);
+        console.error("SalesPrediction fetch error:", err);
         if (!cancelled) {
           setHistWeekly({});
           setPredWeekly({});
           setHistDaily({});
           setPredDaily({});
+          setForecastMetrics(null);
+          setAiInsight(null);
+          setInsightError(err instanceof Error ? err.message : String(err));
+          setInsightLoading(false);
         }
       } finally {
         if (!cancelled) setChartLoading(false);
       }
     }
-    fetchWeekly();
+    fetchAll();
     return () => {
       cancelled = true;
     };
@@ -368,18 +517,86 @@ export default function SalesPrediction() {
               <Lightbulb className="w-6 h-6 text-pink-600" />
             </div>
             <div className="flex-1">
-              <h3 className="font-bold text-foreground mb-2">AI Insight</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">
-                Comparing actual {HISTORICAL_YEAR} sales with the {PREDICTED_YEAR} AI projection
-                for{" "}
-                <span className="font-semibold text-foreground">
-                  {selectedProductName || "selected product"}
-                </span>{" "}
-                in{" "}
-                <span className="font-semibold text-foreground">{selectedMonth}</span>.
-                Marketing campaign uplift, seasonality, and promotional effects are computed
-                inside the trained forecasting model.
-              </p>
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                <h3 className="font-bold text-foreground">AI Insight</h3>
+                {aiInsight?.source && (
+                  <span
+                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      aiInsight.source === "llm"
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {aiInsight.source === "llm" ? "LLM (Qwen)" : aiInsight.source}
+                  </span>
+                )}
+                {forecastMetrics && (
+                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                    MAPE {forecastMetrics.mape.toFixed(2)}% · R² {forecastMetrics.r2.toFixed(2)}
+                  </span>
+                )}
+              </div>
+
+              {insightLoading ? (
+                <p className="text-sm text-muted-foreground animate-pulse">
+                  Generating AI insight from forecast data...
+                </p>
+              ) : insightError && !aiInsight ? (
+                <p className="text-sm text-red-600">
+                  AI insight unavailable: {insightError}
+                </p>
+              ) : aiInsight ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-foreground leading-relaxed">
+                    {aiInsight.summary}
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="bg-orange-50 border border-orange-100 rounded-lg p-3">
+                      <p className="text-[11px] font-bold text-orange-700 uppercase tracking-wider mb-1">
+                        Stockout Risk
+                      </p>
+                      <p className="text-sm text-foreground">{aiInsight.stockout_risk}</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3">
+                      <p className="text-[11px] font-bold text-blue-700 uppercase tracking-wider mb-1">
+                        Recommended Safety Stock
+                      </p>
+                      <p className="text-sm text-foreground">
+                        {aiInsight.recommended_safety_stock}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="bg-green-50 border border-green-100 rounded-lg p-3">
+                    <p className="text-[11px] font-bold text-green-700 uppercase tracking-wider mb-1">
+                      Recommended Action
+                    </p>
+                    <p className="text-sm text-foreground">{aiInsight.recommended_action}</p>
+                  </div>
+
+                  {aiInsight.peak_week && (
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-semibold">Peak:</span> {aiInsight.peak_week}
+                      {aiInsight.peak_sales != null && (
+                        <> — {aiInsight.peak_sales.toLocaleString()} units</>
+                      )}
+                    </p>
+                  )}
+
+                  {aiInsight.bullets && aiInsight.bullets.length > 0 && (
+                    <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1 mt-2">
+                      {aiInsight.bullets.map((b, i) => (
+                        <li key={i}>{b}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  Select a product to generate AI insight.
+                </p>
+              )}
             </div>
           </div>
         </div>
