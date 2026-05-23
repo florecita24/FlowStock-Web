@@ -24,14 +24,60 @@ import type { Inventory, ListResponse } from "@shared/api";
 
 const IndonesiaMap = lazy(() => import("@/components/IndonesiaMap"));
 
+const FLOWSTOCK_AI_3_BASE_URL =
+  import.meta.env.VITE_FLOWSTOCK_AI_3_BASE_URL?.trim() ||
+  "https://fhatikaadr-flowstock-ai-3.hf.space";
+
+type AlertSeverity = "critical" | "warning" | "success";
+
+interface AIActionAlert {
+  id: string;
+  severity: AlertSeverity;
+  title: string;
+  body: string;
+  timeLabel: string;
+  productName: string | null;
+  sku: string | null;
+  warehouseName: string | null;
+  currentStock: number | null;
+  predictedDemand14d: number | null;
+  targetStock: number | null;
+  shortage: number | null;
+  recommendedAction: "None" | "Transfer" | "Discount" | "Order" | null;
+  ctaLabel: string | null;
+}
+
+interface AIActionAlertsResponse {
+  data: AIActionAlert[];
+  total: number;
+}
+
 interface DashboardAlert {
   id: string;
-  type: "critical" | "warning" | "success";
+  type: AlertSeverity;
   title: string;
   body: string;
   time: string;
   product: string | null;
   warehouse: string | null;
+  recommendedAction: "None" | "Transfer" | "Discount" | "Order" | null;
+  ctaLabel: string | null;
+  shortage: number | null;
+}
+
+function mapAIAlert(a: AIActionAlert): DashboardAlert {
+  return {
+    id: a.id,
+    type: a.severity,
+    title: a.title,
+    body: a.body,
+    time: a.timeLabel,
+    product: a.productName,
+    warehouse: a.warehouseName,
+    recommendedAction: a.recommendedAction,
+    ctaLabel: a.ctaLabel,
+    shortage: a.shortage,
+  };
 }
 
 function formatCurrency(value: number): string {
@@ -57,6 +103,9 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       time: `${(idx + 1) * 2}m ago`,
       product: productName,
       warehouse: warehouseName,
+      recommendedAction: "Transfer",
+      ctaLabel: "Execute Transfer Now",
+      shortage: i.shortage,
     });
   });
 
@@ -76,6 +125,9 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       time: `${(idx + 1) * 30}m ago`,
       product: productName,
       warehouse: warehouseName,
+      recommendedAction: "Discount",
+      ctaLabel: "Review Simulation",
+      shortage: null,
     });
   });
 
@@ -88,6 +140,9 @@ export default function Dashboard() {
   const [viewAllOpen, setViewAllOpen] = useState(false);
   const [selectedAlert, setSelectedAlert] = useState<DashboardAlert | null>(null);
   const [inventory, setInventory] = useState<Inventory[]>([]);
+  const [aiAlerts, setAiAlerts] = useState<DashboardAlert[]>([]);
+  const [aiAlertsLoading, setAiAlertsLoading] = useState(true);
+  const [aiAlertsError, setAiAlertsError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,6 +158,34 @@ export default function Dashboard() {
       }
     }
     fetchInventory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch AI Action Alerts from FlowStock AI 3
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchAIAlerts() {
+      try {
+        setAiAlertsLoading(true);
+        setAiAlertsError(null);
+        const res = await fetch(
+          `${FLOWSTOCK_AI_3_BASE_URL}/api/action-alerts?limit=3`
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json: AIActionAlertsResponse = await res.json();
+        if (cancelled) return;
+        setAiAlerts((json.data || []).map(mapAIAlert));
+      } catch (err) {
+        if (cancelled) return;
+        console.error("Failed to fetch AI Action Alerts:", err);
+        setAiAlertsError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!cancelled) setAiAlertsLoading(false);
+      }
+    }
+    fetchAIAlerts();
     return () => {
       cancelled = true;
     };
@@ -179,7 +262,16 @@ export default function Dashboard() {
     ];
   }, [inventory]);
 
-  const allAlerts = useMemo(() => buildAlertsFromInventory(inventory), [inventory]);
+  // Prefer AI alerts when available; fall back to inventory-derived alerts if the AI service fails
+  const inventoryAlerts = useMemo(
+    () => buildAlertsFromInventory(inventory),
+    [inventory]
+  );
+
+  const allAlerts = useMemo(() => {
+    if (aiAlerts.length > 0) return aiAlerts;
+    return inventoryAlerts;
+  }, [aiAlerts, inventoryAlerts]);
 
   const topAlerts = allAlerts.slice(0, 2);
 
@@ -276,28 +368,62 @@ export default function Dashboard() {
             </div>
 
             <div className="space-y-4 flex-1">
-              {topAlerts.length === 0 && (
+              {aiAlertsLoading && (
+                <p className="text-sm text-muted-foreground animate-pulse">
+                  Loading AI action alerts...
+                </p>
+              )}
+              {aiAlertsError && aiAlerts.length === 0 && inventoryAlerts.length === 0 && (
+                <p className="text-sm text-red-600">
+                  AI service unavailable: {aiAlertsError}
+                </p>
+              )}
+              {!aiAlertsLoading && topAlerts.length === 0 && !aiAlertsError && (
                 <p className="text-sm text-muted-foreground">
                   No active alerts. All inventory is healthy.
                 </p>
               )}
               {topAlerts.map((alert) => {
                 const isCritical = alert.type === "critical";
+                const isWarning = alert.type === "warning";
+                const ctaLabel =
+                  alert.ctaLabel ??
+                  (isCritical
+                    ? "Execute Transfer Now"
+                    : alert.recommendedAction === "Discount"
+                      ? "Review Simulation"
+                      : "View Details");
+
+                const handleCta = () => {
+                  if (alert.recommendedAction === "Transfer" || isCritical) {
+                    setSelectedAlert(alert);
+                    setTransferDialogOpen(true);
+                  } else if (alert.product) {
+                    handleReviewSimulation(alert.product);
+                  }
+                };
+
                 return (
                   <div
                     key={alert.id}
                     className={`border rounded-lg p-4 ${
                       isCritical
                         ? "border-red-100 bg-red-50"
-                        : "border-yellow-100 bg-yellow-50"
+                        : isWarning
+                          ? "border-yellow-100 bg-yellow-50"
+                          : "border-green-100 bg-green-50"
                     }`}
                   >
                     <div className="flex gap-3">
-                      <AlertCircle
-                        className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
-                          isCritical ? "text-red-500" : "text-yellow-600"
-                        }`}
-                      />
+                      {alert.type === "success" ? (
+                        <CheckCircle2 className="w-5 h-5 flex-shrink-0 mt-0.5 text-green-600" />
+                      ) : (
+                        <AlertCircle
+                          className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                            isCritical ? "text-red-500" : "text-yellow-600"
+                          }`}
+                        />
+                      )}
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-foreground text-sm">
                           {alert.title}
@@ -308,26 +434,18 @@ export default function Dashboard() {
                         <p className="text-sm text-foreground mt-2">
                           {alert.body}
                         </p>
-                        {isCritical ? (
+                        {alert.type !== "success" && (
                           <Button
-                            className="w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
-                            onClick={() => {
-                              setSelectedAlert(alert);
-                              setTransferDialogOpen(true);
-                            }}
+                            variant={isCritical ? "default" : "outline"}
+                            className={
+                              isCritical
+                                ? "w-full mt-3 bg-primary text-white text-xs h-8 hover:bg-orange-500"
+                                : "w-full mt-3 text-xs h-8"
+                            }
+                            onClick={handleCta}
                           >
-                            Execute Transfer Now
+                            {ctaLabel}
                           </Button>
-                        ) : (
-                          alert.product && (
-                            <Button
-                              variant="outline"
-                              className="w-full mt-3 text-xs h-8"
-                              onClick={() => handleReviewSimulation(alert.product!)}
-                            >
-                              Review Simulation
-                            </Button>
-                          )
                         )}
                       </div>
                     </div>
@@ -361,6 +479,14 @@ export default function Dashboard() {
                     <span className="text-muted-foreground">Warehouse</span>
                     <span className="font-semibold">{selectedAlert.warehouse ?? "-"}</span>
                   </div>
+                  {selectedAlert.shortage != null && selectedAlert.shortage > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Transfer Amount</span>
+                      <span className="font-semibold">
+                        {selectedAlert.shortage.toLocaleString()} units
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Estimated Arrival</span>
                     <span className="font-semibold">2 days</span>
@@ -419,33 +545,38 @@ export default function Dashboard() {
                       <p className={`text-sm mt-1.5 ${isDark ? "text-foreground" : "text-foreground"}`}>
                         {alert.body}
                       </p>
-                      {isRed ? (
-                        <Button
-                          size="sm"
-                          className="mt-3 text-xs h-7 w-full bg-primary text-white"
-                          onClick={() => {
-                            setViewAllOpen(false);
+                      {alert.type !== "success" && (() => {
+                        const ctaLabel =
+                          alert.ctaLabel ??
+                          (isRed
+                            ? "Execute Transfer Now"
+                            : alert.recommendedAction === "Discount"
+                              ? "Review Simulation"
+                              : "View Details");
+                        const handleCta = () => {
+                          setViewAllOpen(false);
+                          if (alert.recommendedAction === "Transfer" || isRed) {
                             setSelectedAlert(alert);
                             setTransferDialogOpen(true);
-                          }}
-                        >
-                          Execute Transfer Now
-                        </Button>
-                      ) : (
-                        alert.product && (
+                          } else if (alert.product) {
+                            handleReviewSimulation(alert.product);
+                          }
+                        };
+                        return (
                           <Button
                             size="sm"
-                            variant="outline"
-                            className="mt-3 text-xs h-7"
-                            onClick={() => {
-                              setViewAllOpen(false);
-                              handleReviewSimulation(alert.product!);
-                            }}
+                            variant={isRed ? "default" : "outline"}
+                            className={
+                              isRed
+                                ? "mt-3 text-xs h-7 w-full bg-primary text-white"
+                                : "mt-3 text-xs h-7"
+                            }
+                            onClick={handleCta}
                           >
-                            Review Simulation
+                            {ctaLabel}
                           </Button>
-                        )
-                      )}
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
