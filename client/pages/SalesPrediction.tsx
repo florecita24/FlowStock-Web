@@ -349,10 +349,19 @@ export default function SalesPrediction() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         item: selectedProduct.id,
-        forecast: filteredForecast,      // month-scoped daily points
-        historical: filteredHistorical,  // same month, prior year
+        // Build a rich label from real Supabase product data for the LLM prompt:
+        // e.g. "Fresh Milk 1L (SKU: PRD-001, Category: Dairy)"
+        product_name: [
+          selectedProduct.name || `Item #${selectedProduct.id}`,
+          selectedProduct.sku ? `SKU: ${selectedProduct.sku}` : null,
+          selectedProduct.category ? `Category: ${selectedProduct.category}` : null,
+        ]
+          .filter(Boolean)
+          .join(" — "),
+        month_label: selectedMonth,            // e.g. "March" or "All months"
+        forecast: filteredForecast,            // daily points for this month
+        historical: filteredHistorical,
         metrics: fullForecast.metrics,
-        // backend auto-derives peak_week / peak_sales from filtered data
       }),
     })
       .then((r) => {
