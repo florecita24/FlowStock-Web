@@ -577,7 +577,7 @@ export default function SalesPrediction() {
                 )}
                 {forecastMetrics && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                    MAPE {forecastMetrics.mape.toFixed(2)}% · R² {forecastMetrics.r2.toFixed(2)}
+                    MAPE {(forecastMetrics.mape).toFixed(1)}% · R² {forecastMetrics.r2.toFixed(2)}
                   </span>
                 )}
               </div>
