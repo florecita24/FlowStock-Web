@@ -194,6 +194,9 @@ export default function SalesPrediction() {
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState<string | null>(null);
 
+  // Full forecast response stored so we can re-slice per month without re-running
+  const [fullForecast, setFullForecast] = useState<ForecastResponse | null>(null);
+
   // Fetch products list once
   useEffect(() => {
     let cancelled = false;
@@ -225,8 +228,7 @@ export default function SalesPrediction() {
     [products, selectedProductName]
   );
 
-  // Fetch historical (2017 from Supabase) + AI forecast (from /forecast/run) in parallel.
-  // AI Insight (/forecast/ai-insight) is fetched after we have the weekly forecast.
+  // ── Effect 1: Fetch historical + full-year forecast when product changes ────
   useEffect(() => {
     if (!selectedProduct) return;
     let cancelled = false;
@@ -253,6 +255,8 @@ export default function SalesPrediction() {
         setChartLoading(true);
         setInsightLoading(true);
         setInsightError(null);
+        setFullForecast(null);
+        setAiInsight(null);
 
         const [histRes, forecastJson] = await Promise.all([
           fetch(`/api/store-sales/weekly/product/${selectedProduct!.id}?year=${HISTORICAL_YEAR}`),
@@ -285,42 +289,8 @@ export default function SalesPrediction() {
         setPredWeekly(predWeeklyBuckets);
         setPredDaily(predDailyBuckets);
 
-        // Trigger LLM insight call now that we have weekly forecast data
-        fetch(`${FORECAST_API_BASE_URL}/forecast/ai-insight`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            item: selectedProduct!.id,
-            weekly_forecast: forecastJson.weekly_forecast || [],
-            historical: forecastJson.historical || [],
-            metrics: forecastJson.metrics,
-            peak_week: forecastJson.insight?.peak_week,
-            peak_sales: forecastJson.insight?.peak_sales,
-          }),
-        })
-          .then((r) => {
-            if (!r.ok) throw new Error(`AI insight HTTP ${r.status}`);
-            return r.json();
-          })
-          .then((insight: AIInsightResponse) => {
-            if (cancelled) return;
-            setAiInsight(insight);
-          })
-          .catch((err) => {
-            if (cancelled) return;
-            console.error("AI insight fetch error:", err);
-            // Fallback: use rule-based insight from /forecast/run
-            const fallback: AIInsightResponse = {
-              ...forecastJson.insight,
-              bullets: forecastJson.insight.bullets || [],
-              source: "fallback",
-            };
-            setAiInsight(fallback);
-            setInsightError(err instanceof Error ? err.message : String(err));
-          })
-          .finally(() => {
-            if (!cancelled) setInsightLoading(false);
-          });
+        // Store full forecast — Effect 2 will immediately fire to generate the insight
+        if (!cancelled) setFullForecast(forecastJson);
       } catch (err) {
         console.error("SalesPrediction fetch error:", err);
         if (!cancelled) {
@@ -342,6 +312,75 @@ export default function SalesPrediction() {
       cancelled = true;
     };
   }, [selectedProduct?.id]);
+
+  // ── Effect 2: Re-infer AI insight whenever the selected month changes ────────
+  // Filters the stored daily forecast to the selected month so the LLM always
+  // reasons about exactly the data visible in the chart.
+  useEffect(() => {
+    if (!fullForecast || !selectedProduct) return;
+    let cancelled = false;
+
+    setInsightLoading(true);
+    setInsightError(null);
+
+    // Filter daily forecast points to the selected month (or keep all for "All months")
+    const monthIdx = MONTH_OPTIONS.indexOf(selectedMonth) - 1; // 0-based; -1 = "All months"
+    const filteredForecast: ForecastDataPoint[] =
+      selectedMonth === "All months"
+        ? fullForecast.forecast
+        : fullForecast.forecast.filter((pt) => {
+            const d = new Date(pt.date);
+            return !isNaN(d.getTime()) && d.getMonth() === monthIdx;
+          });
+
+    // Filter historical to same month for a fair comparison baseline
+    const filteredHistorical: HistoricalDataPoint[] =
+      selectedMonth === "All months"
+        ? fullForecast.historical
+        : fullForecast.historical.filter((pt) => {
+            const d = new Date(pt.date);
+            return !isNaN(d.getTime()) && d.getMonth() === monthIdx;
+          });
+
+    fetch(`${FORECAST_API_BASE_URL}/forecast/ai-insight`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        item: selectedProduct.id,
+        forecast: filteredForecast,      // month-scoped daily points
+        historical: filteredHistorical,  // same month, prior year
+        metrics: fullForecast.metrics,
+        // backend auto-derives peak_week / peak_sales from filtered data
+      }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error(`AI insight HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((insight: AIInsightResponse) => {
+        if (cancelled) return;
+        setAiInsight(insight);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("AI insight fetch error:", err);
+        // Fallback: use insight embedded in the /forecast/run response
+        const fallback: AIInsightResponse = {
+          ...fullForecast.insight,
+          bullets: fullForecast.insight.bullets || [],
+          source: "fallback",
+        };
+        setAiInsight(fallback);
+        setInsightError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setInsightLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedMonth, selectedProduct?.id, fullForecast]);
 
   const chartData = useMemo(
     () => buildChartData(histWeekly, predWeekly, histDaily, predDaily, selectedMonth),
@@ -519,6 +558,10 @@ export default function SalesPrediction() {
             <div className="flex-1">
               <div className="flex items-center gap-2 mb-2 flex-wrap">
                 <h3 className="font-bold text-foreground">AI Insight</h3>
+                {/* Month context pill */}
+                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
+                  {selectedMonth}
+                </span>
                 {aiInsight?.source && (
                   <span
                     className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
@@ -539,7 +582,7 @@ export default function SalesPrediction() {
 
               {insightLoading ? (
                 <p className="text-sm text-muted-foreground animate-pulse">
-                  Generating AI insight from forecast data...
+                  Analyzing {selectedMonth === "All months" ? "full year" : selectedMonth} data...
                 </p>
               ) : insightError && !aiInsight ? (
                 <p className="text-sm text-red-600">
