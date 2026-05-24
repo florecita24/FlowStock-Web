@@ -388,7 +388,7 @@ export default function Dashboard() {
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-foreground">Overview</h1>
-          <p className="text-sm text-white mt-1">AI-powered insights and operational metrics.</p>
+          <p className="text-sm text-foreground mt-1">AI-powered insights and operational metrics.</p>
         </div>
 
         {/* Stat Cards */}
@@ -425,7 +425,7 @@ export default function Dashboard() {
               <h2 className="text-lg font-bold text-foreground">Regional Stock Distribution</h2>
               <div className="flex gap-4">
                 <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#10B981" }} />
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                   <span className="text-xs text-muted-foreground">Healthy</span>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -433,7 +433,7 @@ export default function Dashboard() {
                   <span className="text-xs text-muted-foreground">Critical</span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                   <span className="text-xs text-muted-foreground">Overstock</span>
                 </div>
               </div>
