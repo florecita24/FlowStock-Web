@@ -228,7 +228,7 @@ export default function Dashboard() {
         setAiAlertsLoading(true);
         setAiAlertsError(null);
         const res = await fetch(
-          `${FLOWSTOCK_AI_3_BASE_URL}/api/action-alerts?limit=4`
+          `${FLOWSTOCK_AI_3_BASE_URL}/api/action-alerts?limit=20`
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: AIActionAlertsResponse = await res.json();
@@ -352,7 +352,7 @@ export default function Dashboard() {
     return inventoryAlerts;
   }, [enrichedAiAlerts, inventoryAlerts]);
 
-  const topAlerts = allAlerts.slice(0, 4);
+  const topAlerts = allAlerts.slice(0, 2);
 
   const handleConfirmTransfer = () => {
     setTransferDialogOpen(false);
@@ -401,9 +401,9 @@ export default function Dashboard() {
         </div>
 
         {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           {/* Regional Stock Distribution */}
-          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col">
+          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col self-start">
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <h2 className="text-lg font-bold text-foreground">Regional Stock Distribution</h2>
               <div className="flex gap-4">
@@ -423,7 +423,7 @@ export default function Dashboard() {
             </div>
 
             {/* map-isolate keeps Leaflet's z-index contained */}
-            <div className="map-isolate flex-1 min-h-0">
+            <div className="map-isolate h-[360px]">
               <Suspense fallback={
                 <div className="w-full h-full min-h-[240px] rounded-xl bg-muted/30 flex items-center justify-center text-sm text-muted-foreground">
                   Loading map...

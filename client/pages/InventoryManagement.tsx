@@ -260,7 +260,11 @@ function formatExpiryDate(date: string | null): string {
   if (!date) return "N/A";
   const d = new Date(date);
   if (isNaN(d.getTime())) return "N/A";
-  return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+  return d.toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 function normalizeStatus(status: string): "Healthy" | "Critical" | "Overstock" | "Almost Expired" {
