@@ -1,6 +1,6 @@
 import { RequestHandler } from "express";
 import { supabase } from "../lib/supabase";
-import { ListResponse, StoreSales } from "@shared/api";
+import { ListResponse, StoreSales } from "../../shared/api";
 
 export const getStoreSales: RequestHandler = async (req, res) => {
   try {

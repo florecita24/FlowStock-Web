@@ -1,6 +1,6 @@
 import { RequestHandler } from "express";
 import { supabase } from "../lib/supabase";
-import { ListResponse, Inventory } from "@shared/api";
+import { ListResponse, Inventory } from "../../shared/api";
 
 const FLOWSTOCK_AI_BASE_URL =
   process.env.FLOWSTOCK_AI_BASE_URL?.trim() || "https://fhatikaadr-flowstock-ai-1.hf.space";
