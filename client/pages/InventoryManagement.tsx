@@ -22,6 +22,19 @@ type RecommendationExplanation = {
   alternative_option: SolutionOption;
 };
 
+type RecommendationArtifactRow = {
+  id: number;
+  product_id: number;
+  warehouse_id: number;
+  current_stock: number;
+  expiry_date: string | null;
+  predicted_demand: number;
+  shortage: number;
+  status: string;
+  recommended_action: string;
+  recommendation_detail?: string | null;
+};
+
 const FLOWSTOCK_AI_2_BASE_URL =
   import.meta.env.VITE_FLOWSTOCK_AI_2_BASE_URL?.trim() ||
   "https://fhatikaadr-flowstock-ai-2.hf.space";
@@ -103,6 +116,24 @@ function extractCostTotal(option: SolutionOption | undefined, fallback: number):
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function toUiRecommendationAction(value: string | undefined | null): RecommendationExplanation["recommended_action"] {
+  const raw = String(value || "").toLowerCase();
+  if (raw.includes("transfer")) return "Transfer";
+  if (raw.includes("order")) return "Order";
+  if (raw.includes("discount")) return "Discount";
+  return "None";
+}
+
+function parseRecommendationDetail(rawDetail: string | null | undefined): Record<string, unknown> | null {
+  if (!rawDetail) return null;
+  try {
+    const parsed = JSON.parse(rawDetail);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function computeOptionCosts(item: InventoryItem, option: SolutionOption | undefined, quantity: number) {
   const weightKg = Math.max(item.productWeightGrams, 0) / 1000;
   const unitPrice = Math.max(item.productPrice, 0);
@@ -140,6 +171,17 @@ function computeOptionCosts(item: InventoryItem, option: SolutionOption | undefi
       if (aDistance !== bDistance) return aDistance - bDistance;
       return (Number(b.available_qty) || 0) - (Number(a.available_qty) || 0);
     });
+
+    const addDonor = (warehouse: string, qty: number, distance_km: number, shipping: number) => {
+      const existing = donorsUsed.find((donor) => donor.warehouse === warehouse);
+      if (existing) {
+        existing.qty += qty;
+        existing.shipping += shipping;
+      } else {
+        donorsUsed.push({ warehouse, qty, distance_km, shipping });
+      }
+    };
+
     for (const d of donors) {
       if (remaining <= 0) break;
       const avail = Math.max(0, Number(d.available_qty ?? d.qty) || 0);
@@ -151,21 +193,21 @@ function computeOptionCosts(item: InventoryItem, option: SolutionOption | undefi
         : Number.isFinite(Number(d.shipping))
           ? Number(d.shipping)
           : Math.max(8000, weightKg * take * baseRate * (dist / 100) * 0.6);
-      donorsUsed.push({ warehouse: d.warehouse ?? d.name ?? "donor", qty: take, distance_km: dist, shipping: ship });
+      addDonor(d.warehouse ?? d.name ?? "donor", take, dist, ship);
       shippingTransfer += ship;
       remaining -= take;
     }
     // If still remaining, assume remainder comes from a default donor at distTransfer
     if (remaining > 0) {
       const ship = Math.max(8000, weightKg * remaining * baseRate * (distTransfer / 100) * 0.6);
-      donorsUsed.push({ warehouse: cb?.transfer_from ?? "nearby hub", qty: remaining, distance_km: distTransfer, shipping: ship });
+      addDonor(cb?.transfer_from ?? cb?.donor_warehouse ?? cb?.target_warehouse ?? "nearby hub", remaining, distTransfer, ship);
       shippingTransfer += ship;
     }
   } else {
     shippingTransfer = typeof cb?.transfer_shipping_cost === "number" && Number.isFinite(cb.transfer_shipping_cost)
       ? cb.transfer_shipping_cost
       : Math.max(8000, weightKg * quantity * baseRate * (distTransfer / 100) * 0.6);
-    donorsUsed = [{ warehouse: cb?.transfer_from ?? cb?.donor_warehouse ?? "Nearby hub", qty: quantity, distance_km: distTransfer, shipping: shippingTransfer }];
+    donorsUsed = [{ warehouse: cb?.transfer_from ?? cb?.donor_warehouse ?? cb?.target_warehouse ?? "Nearby hub", qty: quantity, distance_km: distTransfer, shipping: shippingTransfer }];
   }
 
   const otherCosts = typeof cb?.other_costs === "number" && Number.isFinite(cb.other_costs)
@@ -203,8 +245,8 @@ function buildInsightNarrative(item: InventoryItem, solution: RecommendationExpl
   const altIsOrder = (solution?.alternative_option && (solution?.alternative_option.title?.toLowerCase().includes("order")));
   const altIsTransfer = (solution?.alternative_option && (solution?.alternative_option.title?.toLowerCase().includes("transfer"))) || solution?.recommended_action === "Transfer";
 
-  const bestQty = bestIsOrder ? (item.shortage ?? qty) : qty;
-  const altQty = altIsOrder ? (item.shortage ?? qty) : qty;
+  const bestQty = bestIsOrder || bestIsTransfer ? (item.shortage ?? qty) : qty;
+  const altQty = altIsOrder || altIsTransfer ? (item.shortage ?? qty) : qty;
 
   const derivedBest = computeOptionCosts(item, solution?.best_option, bestQty);
   const derivedAlt = computeOptionCosts(item, solution?.alternative_option, altQty);
@@ -267,6 +309,14 @@ function formatExpiryDate(date: string | null): string {
   });
 }
 
+function capitalizeWords(s: string | undefined | null) {
+  if (!s) return "";
+  return String(s)
+    .split(" ")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 function normalizeStatus(status: string): "Healthy" | "Critical" | "Overstock" | "Almost Expired" {
   const lower = status.toLowerCase();
   if (lower.includes("critical")) return "Critical";
@@ -289,7 +339,8 @@ function mapInventoryRow(row: Inventory): InventoryItem {
     shortage: row.shortage > 0 ? row.shortage : undefined,
     expiryDate: formatExpiryDate(row.expiry_date),
     status: normalizeStatus(row.status),
-    recommendedAction: row.recommended_action || "None",
+    // keep a canonical lowercase recommendedAction for logic, display will be capitalized
+    recommendedAction: String(row.recommended_action || "none").toLowerCase(),
     harga: row.products ? formatPrice(productPrice) : "-",
     berat: row.products ? formatWeight(productWeightGrams) : "-",
     productPrice,
@@ -316,22 +367,27 @@ interface ActionButtonConfig {
   altToast: { title: string; description: (item: InventoryItem) => string };
 }
 
-function getActionConfig(action: string): ActionButtonConfig {
+function getActionConfig(action: string, item: InventoryItem, solution: RecommendationExplanation | null): ActionButtonConfig {
   const kind = detectActionKind(action);
+  const isTransferOut = /transfer out|\bto\b/i.test(solution?.best_option?.title ?? "") || item.status === "Overstock";
 
   const CONFIGS: Record<ActionKind, ActionButtonConfig> = {
     transfer: {
       bestLabel: "✓ Approve Transfer",
-      altLabel: "Order from Supplier",
+      altLabel: isTransferOut ? "Launch Discount Campaign" : "Order from Supplier",
       bestToast: {
-        title: "Stock transfer initiated",
+        title: isTransferOut ? "Stock transfer out initiated" : "Stock transfer initiated",
         description: (item) =>
-          `${item.shortage ?? 0} units of ${item.name} are being routed to ${item.warehouse}.`,
+          isTransferOut
+            ? `Surplus of ${item.name} is being reallocated from ${item.warehouse}.`
+            : `${item.shortage ?? 0} units of ${item.name} are being routed to ${item.warehouse}.`,
       },
       altToast: {
-        title: "Supplier order placed",
+        title: isTransferOut ? "Discount campaign launched" : "Supplier order placed",
         description: (item) =>
-          `Purchase order for ${item.shortage ?? 0} units of ${item.name} sent to supplier.`,
+          isTransferOut
+            ? `Promotional discount applied to ${item.name} in ${item.warehouse}.`
+            : `Purchase order for ${item.shortage ?? 0} units of ${item.name} sent to supplier.`,
       },
     },
     order: {
@@ -350,16 +406,16 @@ function getActionConfig(action: string): ActionButtonConfig {
     },
     discount: {
       bestLabel: "✓ Launch Discount Campaign",
-      altLabel: "Hold & Monitor",
+      altLabel: "Request Internal Transfer",
       bestToast: {
         title: "Discount campaign launched",
         description: (item) =>
           `Promotional discount applied to ${item.name} in ${item.warehouse}.`,
       },
       altToast: {
-        title: "Hold position",
+        title: "Stock transfer out initiated",
         description: (item) =>
-          `${item.name} will be re-evaluated in the next demand cycle.`,
+          `Surplus of ${item.name} is being reallocated from ${item.warehouse}.`,
       },
     },
     monitor: {
@@ -427,7 +483,8 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
   const action = solution?.recommended_action ?? item.recommendedAction;
 
   // Resolusi data dinamis berdasarkan porsi penempatan box solusi masing-masing
-  const isBestOptionTransfer = bestOption?.title.toLowerCase().includes("transfer");
+  const isBestOptionTransfer = (bestOption?.title ?? "").toLowerCase().includes("transfer");
+  const isBestTransferOut = /transfer out|\bto\b/i.test(bestOption?.title ?? "");
 
   // Definisikan nama variabel yang dicari oleh JSX UI di bawah
   const bestItemCost = insight.bestCb?.item_cost ?? 0;
@@ -438,7 +495,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
   const altItemCost = insight.altCb?.item_cost ?? 0;
   const altShipping = insight.altCb?.shipping_cost ?? 0;
   const altOther = insight.altCb?.other_costs ?? 0;
-  const altTotal = insight.altCb?.total_cost ?? insight.altTotal
+  const altTotal = insight.altCb?.total_cost ?? insight.altTotal;
   const isAltOptionTransfer = (alternativeOption?.title ?? "").toLowerCase().includes("transfer") || (solution?.recommended_action === "Transfer");
   const isSupplierCompactView = solution?.recommended_action === "Transfer" && (alternativeOption?.title ?? "").toLowerCase().includes("order");
   const isHoldMonitorView = solution?.recommended_action === "Discount" && /hold|monitor/i.test(alternativeOption?.title ?? "");
@@ -448,6 +505,13 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
       ? insight.bestCb.markdown_cost
       : Math.max(bestTotal - bestShipping - bestOther, 0))
     : 0;
+  const isAltDiscountView = /discount/i.test(alternativeOption?.title ?? "");
+  const altMarkdownCost = isAltDiscountView
+    ? (typeof insight.altCb?.markdown_cost === "number"
+      ? insight.altCb.markdown_cost
+      : Math.max(altTotal - altShipping - altOther, 0))
+    : 0;
+  const isAltTransferOut = /transfer out|\bto\b/i.test(alternativeOption?.title ?? "");
   const supplierCompactQty = Math.max(item.shortage ?? insight.quantity, 1);
   const supplierCompactItemCost = item.productPrice > 0 ? item.productPrice * supplierCompactQty : altItemCost;
   const supplierCompactTotal = supplierCompactItemCost + altShipping + altOther;
@@ -519,27 +583,56 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                       </div>
                     )}
                     {isBestDiscountView && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-500">Markdown cost:</span>
-                        <span className="font-medium text-gray-700">{formatMoney(bestMarkdownCost)}</span>
-                      </div>
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Gross stock value:</span>
+                          <span className="font-medium text-gray-700">
+                            {formatMoney(solution?.best_option?.cost_breakdown?.gross_value as number ?? (item.productPrice * Math.max(item.currentStock - item.predictedDemand, 1)))}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Suggested discount:</span>
+                          <span className="font-medium text-gray-700">
+                            {solution?.best_option?.cost_breakdown?.suggested_discount_percent as number ?? 15}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Markdown cost:</span>
+                          <span className="font-medium text-gray-700">{formatMoney(bestMarkdownCost)}</span>
+                        </div>
+                      </>
                     )}
-                    {/* If transfer, show donors list */}
+                    {/* If transfer, show donors or targets list with contextual label */}
                     {((solution?.recommended_action === "Transfer") || ((bestOption?.title ?? "").toLowerCase().includes("transfer"))) && (
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        <p className="font-semibold text-sm">Donor hubs:</p>
+                      <div className="mt-2 text-xs text-muted-foreground space-y-1.5">
+                        <p className="font-semibold text-sm">{isBestTransferOut ? "Target hubs:" : "Donor hubs:"}</p>
                         {insight.bestDonors && insight.bestDonors.length > 0 ? (
                           insight.bestDonors.map((d: any, i: number) => (
-                            <p key={i}>{d.warehouse} — {d.qty} units — {Math.round(d.distance_km)} km — {formatMoney(d.shipping)}</p>
+                            <div key={i} className="border-l-2 border-orange-400 pl-2.5 py-1.5 my-1.5 space-y-0.5 bg-orange-50/10 rounded-r-md">
+                              <p className="font-semibold text-gray-800 text-[12px]">
+                                {isBestTransferOut 
+                                  ? `Sender: ${capitalizeWords(item.warehouse)} → Receiver: ${d.warehouse}`
+                                  : `Sender: ${d.warehouse} → Receiver: ${capitalizeWords(item.warehouse)}`}
+                              </p>
+                              <p className="text-gray-600 text-[11px]">
+                                {d.qty} units — {Math.round(d.distance_km)} km — Shipping: {formatMoney(d.shipping)}
+                              </p>
+                            </div>
                           ))
                         ) : (
-                          <p>{insight.bestTransferFrom ?? "Nearby hub"}</p>
+                          <div className="border-l-2 border-orange-400 pl-2.5 py-1 bg-orange-50/10 rounded-r-md">
+                            <p className="font-semibold text-gray-800 text-[12px]">
+                              {isBestTransferOut
+                                ? `Sender: ${capitalizeWords(item.warehouse)} → Receiver: ${insight.bestTransferFrom ?? "Nearby hub"}`
+                                : `Sender: ${insight.bestTransferFrom ?? "Nearby hub"} → Receiver: ${capitalizeWords(item.warehouse)}`}
+                            </p>
+                          </div>
                         )}
                       </div>
                     )}
                     <div className="flex justify-between">
                       <span className="text-gray-500">{isBestOptionTransfer ? "Transfer shipping:" : "Supplier shipping:"}</span>
-                      <span className="font-medium text-gray-700">{formatMoney(bestShipping)}</span>
+                      <span className="font-medium text-gray-700">{formatMoney(isBestDiscountView ? 0 : bestShipping)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Handling / Other:</span>
@@ -547,7 +640,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                     </div>
                     <div className="flex justify-between border-t border-dashed border-gray-200 pt-1.5 mt-1 font-bold text-sm">
                       <span className="text-gray-900">Total Operational Value:</span>
-                      <span className="text-orange-600">{formatMoney(isBestDiscountView ? bestMarkdownCost + bestShipping + bestOther : bestTotal)}</span>
+                      <span className="text-orange-600">{formatMoney(isBestDiscountView ? bestMarkdownCost + bestOther : bestTotal)}</span>
                     </div>
                   </div>
                 </div>
@@ -581,42 +674,79 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                   {/* Estimation Cost Table - Alternative Option */}
                   <div className="bg-white border border-gray-200 rounded-lg p-3 text-xs space-y-1.5 shadow-sm">
                     <p className="font-bold text-gray-800 border-b border-gray-100 pb-1">Estimate breakdown</p>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Item valuation cost:</span>
-                      <span className="font-medium text-gray-700">
-                        {(() => {
-                          if (isHoldMonitorView) return formatMoney(0);
-                          if (isSupplierCompactView) {
-                            return `${supplierCompactQty} × ${formatPrice(item.productPrice)} = ${formatMoney(supplierCompactItemCost)}`;
-                          }
-                          const price = item.productPrice ?? 0;
-                          const altIsOrderLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("order"));
-                          const altIsTransferLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer");
-                          const qtyForAlt = altIsOrderLocal ? (item.shortage ?? insight.quantity) : insight.quantity;
-                          if (altIsTransferLocal) return formatMoney(0);
-                          if (altIsOrderLocal && price > 0 && qtyForAlt > 0) {
-                            return `${qtyForAlt} × ${formatPrice(price)} = ${formatMoney(price * qtyForAlt)}`;
-                          }
-                          if (altItemCost > 0) return formatMoney(altItemCost);
-                          return price > 0 ? `${formatMoney(price * qtyForAlt)}` : "Price missing";
-                        })()}
-                      </span>
-                    </div>
-                    {!isSupplierCompactView && (((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer")) && (
-                      <div className="mt-2 text-xs text-muted-foreground">
-                        <p className="font-semibold text-sm">Donor hubs:</p>
+                    {!isAltDiscountView && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Item valuation cost:</span>
+                        <span className="font-medium text-gray-700">
+                          {(() => {
+                            if (isHoldMonitorView) return formatMoney(0);
+                            if (isSupplierCompactView) {
+                              return `${supplierCompactQty} × ${formatPrice(item.productPrice)} = ${formatMoney(supplierCompactItemCost)}`;
+                            }
+                            const price = item.productPrice ?? 0;
+                            const altIsOrderLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("order"));
+                            const altIsTransferLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer");
+                            const qtyForAlt = altIsOrderLocal ? (item.shortage ?? insight.quantity) : insight.quantity;
+                            if (altIsTransferLocal) return formatMoney(0);
+                            if (altIsOrderLocal && price > 0 && qtyForAlt > 0) {
+                              return `${qtyForAlt} × ${formatPrice(price)} = ${formatMoney(price * qtyForAlt)}`;
+                            }
+                            if (altItemCost > 0) return formatMoney(altItemCost);
+                            return price > 0 ? `${formatMoney(price * qtyForAlt)}` : "Price missing";
+                          })()}
+                        </span>
+                      </div>
+                    )}
+                    {isAltDiscountView && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Gross stock value:</span>
+                          <span className="font-medium text-gray-700">
+                            {formatMoney(solution?.alternative_option?.cost_breakdown?.gross_value as number ?? (item.productPrice * Math.max(item.currentStock - item.predictedDemand, 1)))}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Suggested discount:</span>
+                          <span className="font-medium text-gray-700">
+                            {solution?.alternative_option?.cost_breakdown?.suggested_discount_percent as number ?? 15}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Markdown cost:</span>
+                          <span className="font-medium text-gray-700">{formatMoney(altMarkdownCost)}</span>
+                        </div>
+                      </>
+                    )}
+                    {!isSupplierCompactView && !isAltDiscountView && (((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer")) && (
+                      <div className="mt-2 text-xs text-muted-foreground space-y-1.5">
+                        <p className="font-semibold text-sm">{isAltTransferOut ? "Target hubs:" : "Donor hubs:"}</p>
                         {insight.altDonors && insight.altDonors.length > 0 ? (
                           insight.altDonors.map((d: any, i: number) => (
-                            <p key={i}>{d.warehouse} — {d.qty} units — {Math.round(d.distance_km)} km — {formatMoney(d.shipping)}</p>
+                            <div key={i} className="border-l-2 border-gray-400 pl-2.5 py-1.5 my-1.5 space-y-0.5 bg-gray-50/10 rounded-r-md">
+                              <p className="font-semibold text-gray-800 text-[12px]">
+                                {isAltTransferOut 
+                                  ? `Sender: ${capitalizeWords(item.warehouse)} → Receiver: ${d.warehouse}`
+                                  : `Sender: ${d.warehouse} → Receiver: ${capitalizeWords(item.warehouse)}`}
+                              </p>
+                              <p className="text-gray-600 text-[11px]">
+                                {d.qty} units — {Math.round(d.distance_km)} km — Shipping: {formatMoney(d.shipping)}
+                              </p>
+                            </div>
                           ))
                         ) : (
-                          <p>{insight.altTransferFrom ?? "Nearby hub"}</p>
+                          <div className="border-l-2 border-gray-400 pl-2.5 py-1 bg-gray-50/10 rounded-r-md">
+                            <p className="font-semibold text-gray-800 text-[12px]">
+                              {isAltTransferOut
+                                ? `Sender: ${capitalizeWords(item.warehouse)} → Receiver: ${insight.altTransferFrom ?? "Nearby hub"}`
+                                : `Sender: ${insight.altTransferFrom ?? "Nearby hub"} → Receiver: ${capitalizeWords(item.warehouse)}`}
+                            </p>
+                          </div>
                         )}
                       </div>
                     )}
                     <div className="flex justify-between">
                       <span className="text-gray-500">{isAltOptionTransfer ? "Transfer shipping:" : "Supplier shipping:"}</span>
-                      <span className="font-medium text-gray-700">{formatMoney(isHoldMonitorView ? 0 : altShipping)}</span>
+                      <span className="font-medium text-gray-700">{formatMoney(isHoldMonitorView || isAltDiscountView ? 0 : altShipping)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Handling / Other:</span>
@@ -624,7 +754,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                     </div>
                     <div className="flex justify-between border-t border-dashed border-gray-200 pt-1.5 mt-1 font-bold text-sm">
                       <span className="text-gray-900">Total Operational Value:</span>
-                      <span className="text-gray-900">{formatMoney(isHoldMonitorView ? 0 : (isSupplierCompactView ? supplierCompactTotal : altTotal))}</span>
+                      <span className="text-gray-900">{formatMoney(isHoldMonitorView ? 0 : (isSupplierCompactView ? supplierCompactTotal : (isAltDiscountView ? altMarkdownCost + altOther : altTotal)))}</span>
                     </div>
                   </div>
                 </div>
@@ -646,7 +776,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
 
           {/* Action Footer */}
           {(() => {
-            const config = getActionConfig(action);
+            const config = getActionConfig(action, item, solution);
             return (
               <div className="flex justify-end gap-2.5 mt-5 pt-4 border-t border-gray-100 flex-wrap">
                 <Button
@@ -863,6 +993,242 @@ export default function InventoryManagement() {
       setSolutionLoading(cacheKey);
       setSolutionError(null);
 
+      // Try to load pre-computed artifact first. If the artifact endpoint is
+      // unavailable (404, network error, etc.), fall through to the live
+      // AI explanation endpoint below — don't fail the whole flow.
+      let artifactRow: RecommendationArtifactRow | undefined;
+      try {
+        const artifactRes = await fetch(`${FLOWSTOCK_AI_2_BASE_URL.replace(/\/$/, "")}/api/inventory-recommendations?limit=2000`);
+        if (artifactRes.ok) {
+          const artifactJson: { data?: RecommendationArtifactRow[] } = await artifactRes.json();
+          artifactRow = artifactJson.data?.find((row) => String(row.id) === cacheKey);
+        } else {
+          console.warn(`AI-2 artifact endpoint returned HTTP ${artifactRes.status}; falling back to live explanation endpoint.`);
+        }
+      } catch (artifactErr) {
+        console.warn("AI-2 artifact fetch failed; falling back to live explanation endpoint:", artifactErr);
+      }
+
+      if (artifactRow) {
+        const detail = parseRecommendationDetail(artifactRow.recommendation_detail);
+        const recommendedAction = toUiRecommendationAction(artifactRow.recommended_action);
+        const statusLower = String(artifactRow.status).toLowerCase();
+        const isShortageStatus = statusLower === "critical" || statusLower.includes("expired");
+        const isTransferOut = String(detail?.action).toLowerCase() === "transfer out" || (recommendedAction === "Transfer" && statusLower === "overstock");
+        const isTransferIn = String(detail?.action).toLowerCase() === "transfer in" || (recommendedAction === "Transfer" && isShortageStatus);
+
+        let bestOptionFromDetail;
+        let alternativeOptionFromDetail;
+
+        if (isTransferIn) {
+          // Transfer In (Shortage)
+          bestOptionFromDetail = {
+            title: `Transfer stock from ${detail?.donor_warehouse ?? "nearby surplus hubs"} (overstock hub)`,
+            description: `Rebalance stock from overstock hub: ${detail?.donor_warehouse ?? "nearby surplus hubs"}.`,
+            costImpact: `Pull stock from overstock hubs; estimated transfer cost ${formatMoney(toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost))}.`,
+            riskLevel: "Low" as const,
+            feasibility: "High" as const,
+            cost_breakdown: {
+              ...detail,
+              total_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost),
+              shipping_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.shipping_cost ?? detail?.shipping),
+              other_costs: toNumber(detail?.other_costs ?? 5000),
+              item_cost: 0,
+              donors: detail?.donor_warehouse ? [{
+                warehouse: detail.donor_warehouse,
+                available_qty: toNumber(detail.transfer_units ?? detail.qty),
+                qty: toNumber(detail.transfer_units ?? detail.qty),
+                distance_km: toNumber(detail.distance_km),
+                shipping: toNumber(detail.estimated_transfer_cost ?? detail.shipping_cost),
+              }] : []
+            }
+          };
+
+          // Alternative is Order from supplier
+          const orderQty = Math.max(item.shortage ?? 1, 1);
+          const orderItemCost = item.productPrice * orderQty;
+          const orderShipping = Math.max(15000, (item.productWeightGrams / 1000) * orderQty * 3200 * 8);
+          const orderOther = Math.max(5000, orderItemCost * 0.015);
+          alternativeOptionFromDetail = {
+            title: "Order from supplier",
+            description: "Fulfill stock deficit via direct external supplier order.",
+            costImpact: `Direct supplier replenishment; estimated order cost ${formatMoney(orderItemCost + orderShipping + orderOther)}.`,
+            riskLevel: "Medium" as const,
+            feasibility: "Medium" as const,
+            cost_breakdown: {
+              item_cost: orderItemCost,
+              shipping_cost: orderShipping,
+              other_costs: orderOther,
+              total_cost: orderItemCost + orderShipping + orderOther
+            }
+          };
+
+        } else if (isTransferOut) {
+          // Transfer Out (Overstock)
+          bestOptionFromDetail = {
+            title: `Transfer stock to ${detail?.target_warehouse ?? "nearby shortage hubs"} (critical stock hub)`,
+            description: `Redistribute surplus stock to critical stock hub: ${detail?.target_warehouse ?? "nearby shortage hubs"}.`,
+            costImpact: `Reallocate surplus to critical stock hubs; estimated transfer cost ${formatMoney(toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost))}.`,
+            riskLevel: "Low" as const,
+            feasibility: "High" as const,
+            cost_breakdown: {
+              ...detail,
+              total_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost),
+              shipping_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.shipping_cost ?? detail?.shipping),
+              other_costs: toNumber(detail?.other_costs ?? 5000),
+              item_cost: 0,
+              donors: detail?.target_warehouse ? [{
+                warehouse: detail.target_warehouse,
+                available_qty: toNumber(detail.transfer_units ?? detail.qty),
+                qty: toNumber(detail.transfer_units ?? detail.qty),
+                distance_km: toNumber(detail.distance_km),
+                shipping: toNumber(detail.estimated_transfer_cost ?? detail.shipping_cost),
+              }] : []
+            }
+          };
+
+          // Alternative is Markdown Discount
+          const discQty = Math.max(item.currentStock - item.predictedDemand, 1);
+          const grossVal = item.productPrice * discQty;
+          const markdownCost = grossVal * 0.15;
+          const handlingCost = Math.max(5000, discQty * 2500);
+          alternativeOptionFromDetail = {
+            title: `Apply 15% markdown discount`,
+            description: "Accelerate overstock turnover locally to free locked capital.",
+            costImpact: `15% markdown on excess stock; total cost ${formatMoney(markdownCost + handlingCost)}.`,
+            riskLevel: "Medium" as const,
+            feasibility: "Medium" as const,
+            cost_breakdown: {
+              suggested_discount_percent: 15,
+              gross_value: grossVal,
+              markdown_cost: markdownCost,
+              handling_cost: handlingCost,
+              other_costs: handlingCost,
+              total_cost: markdownCost + handlingCost,
+            }
+          };
+
+        } else if (recommendedAction === "Order") {
+          // Order (Shortage)
+          const orderQty = Math.max(item.shortage ?? 1, 1);
+          const orderItemCost = item.productPrice * orderQty;
+          const orderShipping = Math.max(15000, (item.productWeightGrams / 1000) * orderQty * 3200 * 8);
+          const orderOther = Math.max(5000, orderItemCost * 0.015);
+          bestOptionFromDetail = {
+            title: "Order from supplier",
+            description: "Fulfill stock deficit via direct external supplier order.",
+            costImpact: `Direct supplier replenishment; estimated order cost ${formatMoney(orderItemCost + orderShipping + orderOther)}.`,
+            riskLevel: "Low" as const,
+            feasibility: "High" as const,
+            cost_breakdown: {
+              item_cost: orderItemCost,
+              shipping_cost: orderShipping,
+              other_costs: orderOther,
+              total_cost: orderItemCost + orderShipping + orderOther
+            }
+          };
+
+          // Alternative is Transfer In (if we have a donor)
+          alternativeOptionFromDetail = {
+            title: `Transfer stock from ${detail?.donor_warehouse ?? "nearby surplus hubs"} (overstock hub)`,
+            description: `Rebalance stock from overstock hub: ${detail?.donor_warehouse ?? "nearby surplus hubs"}.`,
+            costImpact: `Pull stock from overstock hubs; estimated transfer cost ${formatMoney(toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost))}.`,
+            riskLevel: "Medium" as const,
+            feasibility: "Medium" as const,
+            cost_breakdown: {
+              ...detail,
+              total_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost),
+              shipping_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.shipping_cost ?? detail?.shipping),
+              other_costs: toNumber(detail?.other_costs ?? 5000),
+              item_cost: 0,
+              donors: detail?.donor_warehouse ? [{
+                warehouse: detail.donor_warehouse,
+                available_qty: toNumber(detail.transfer_units ?? detail.qty),
+                qty: toNumber(detail.transfer_units ?? detail.qty),
+                distance_km: toNumber(detail.distance_km),
+                shipping: toNumber(detail.estimated_transfer_cost ?? detail.shipping_cost),
+              }] : []
+            }
+          };
+
+        } else if (recommendedAction === "Discount") {
+          // Discount (Overstock)
+          const discQty = Math.max(item.currentStock - item.predictedDemand, 1);
+          const grossVal = item.productPrice * discQty;
+          const markdownCost = grossVal * 0.15;
+          const handlingCost = Math.max(5000, discQty * 2500);
+          bestOptionFromDetail = {
+            title: `Apply 15% markdown discount`,
+            description: "Accelerate overstock turnover locally to free locked capital.",
+            costImpact: `15% markdown on excess stock; total cost ${formatMoney(markdownCost + handlingCost)}.`,
+            riskLevel: "Low" as const,
+            feasibility: "High" as const,
+            cost_breakdown: {
+              suggested_discount_percent: 15,
+              gross_value: grossVal,
+              markdown_cost: markdownCost,
+              handling_cost: handlingCost,
+              other_costs: handlingCost,
+              total_cost: markdownCost + handlingCost,
+            }
+          };
+
+          // Alternative is Transfer Out
+          alternativeOptionFromDetail = {
+            title: `Transfer stock to ${detail?.target_warehouse ?? "nearby shortage hubs"} (critical stock hub)`,
+            description: `Redistribute surplus stock to critical stock hub: ${detail?.target_warehouse ?? "nearby shortage hubs"}.`,
+            costImpact: `Reallocate surplus to critical stock hubs; estimated transfer cost ${formatMoney(toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost))}.`,
+            riskLevel: "Medium" as const,
+            feasibility: "Medium" as const,
+            cost_breakdown: {
+              ...detail,
+              total_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.total_cost),
+              shipping_cost: toNumber(detail?.estimated_transfer_cost ?? detail?.shipping_cost ?? detail?.shipping),
+              other_costs: toNumber(detail?.other_costs ?? 5000),
+              item_cost: 0,
+              donors: detail?.target_warehouse ? [{
+                warehouse: detail.target_warehouse,
+                available_qty: toNumber(detail.transfer_units ?? detail.qty),
+                qty: toNumber(detail.transfer_units ?? detail.qty),
+                distance_km: toNumber(detail.distance_km),
+                shipping: toNumber(detail.estimated_transfer_cost ?? detail.shipping_cost),
+              }] : []
+            }
+          };
+
+        } else {
+          // Standard / Healthy / none
+          bestOptionFromDetail = {
+            title: "Maintain standard monitoring",
+            description: "Inventory parameters are stable within standard target lines.",
+            costImpact: "Monitoring only; estimated cost Rp 0.",
+            riskLevel: "Low" as const,
+            feasibility: "High" as const,
+            cost_breakdown: null
+          };
+
+          alternativeOptionFromDetail = {
+            title: "Apply 15% markdown discount",
+            description: "Accelerate overstock turnover locally to free locked capital.",
+            costImpact: "15% markdown on excess stock; total cost Rp 0.",
+            riskLevel: "Medium" as const,
+            feasibility: "Medium" as const,
+            cost_breakdown: null
+          };
+        }
+
+        const normalizedArtifactSolution: RecommendationExplanation = {
+          recommended_action: recommendedAction,
+          best_option: bestOptionFromDetail,
+          alternative_option: alternativeOptionFromDetail,
+        };
+
+        setSolutionData((current) => ({ ...current, [cacheKey]: normalizedArtifactSolution }));
+        return;
+      }
+
+      // Fallback: call AI explanation endpoint if artifact row is unavailable.
+      const rawAction = item.recommendedAction || "none";
       const payload = {
         product_name: item.name,
         warehouse_name: item.warehouse,
@@ -871,7 +1237,7 @@ export default function InventoryManagement() {
         target_stock: Math.max(item.currentStock + (item.shortage ?? 0), item.predictedDemand),
         shortage: item.shortage ?? 0,
         status: item.status,
-        recommended_action: item.recommendedAction as "None" | "Transfer" | "Discount" | "Order",
+        recommended_action: toUiRecommendationAction(rawAction),
       };
 
       const res = await fetch(`${FLOWSTOCK_AI_2_BASE_URL.replace(/\/$/, "")}/api/generate-recommendation-explanation`, {
@@ -888,7 +1254,64 @@ export default function InventoryManagement() {
       }
 
       const data: RecommendationExplanation = await res.json();
-      setSolutionData((current) => ({ ...current, [cacheKey]: data }));
+      let normalized: RecommendationExplanation = {
+        ...data,
+        recommended_action: toUiRecommendationAction(data.recommended_action),
+      };
+
+      // Post-process: for Almost Expired / Critical items, "Maintain" is
+      // NEVER acceptable as a recommendation — both options must be actionable
+      // (Transfer or Order). We do two passes:
+      //   1) If best is passive (Maintain/Monitor) and alternative is
+      //      actionable, swap them.
+      //   2) If the alternative is still passive after the swap, replace it
+      //      with a synthetic "Order from supplier" option computed from
+      //      item data.
+      const statusLower = String(item.status).toLowerCase();
+      const isShortageStatus = statusLower === "critical" || statusLower.includes("expired");
+      const isPassive = (title?: string) => /maintain|monitor|standard/i.test(title ?? "");
+
+      if (isShortageStatus) {
+        // Step 1: ensure best is actionable
+        if (isPassive(normalized.best_option?.title) && !isPassive(normalized.alternative_option?.title)) {
+          normalized = {
+            ...normalized,
+            best_option: normalized.alternative_option,
+            alternative_option: normalized.best_option,
+          };
+        }
+
+        // Step 2: if alternative is still passive, replace with synthetic Order
+        if (isPassive(normalized.alternative_option?.title)) {
+          const orderQty = Math.max(item.shortage ?? 1, 1);
+          const orderItemCost = Math.max(item.productPrice, 0) * orderQty;
+          const orderShipping = Math.max(
+            15000,
+            (Math.max(item.productWeightGrams, 0) / 1000) * orderQty * 3200 * 8,
+          );
+          const orderOther = Math.max(5000, orderItemCost * 0.015);
+          const orderTotal = orderItemCost + orderShipping + orderOther;
+
+          normalized = {
+            ...normalized,
+            alternative_option: {
+              title: "Order from supplier",
+              description: "Fulfill stock deficit via direct external supplier order.",
+              costImpact: `Direct supplier replenishment; estimated order cost ${formatMoney(orderTotal)}.`,
+              riskLevel: "Medium",
+              feasibility: "Medium",
+              cost_breakdown: {
+                item_cost: orderItemCost,
+                shipping_cost: orderShipping,
+                other_costs: orderOther,
+                total_cost: orderTotal,
+              },
+            },
+          };
+        }
+      }
+
+      setSolutionData((current) => ({ ...current, [cacheKey]: normalized }));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setSolutionError(`Failed to load deployed AI-2 solution: ${message}`);
@@ -921,7 +1344,7 @@ export default function InventoryManagement() {
   const handleApprove = (item: InventoryItem) => {
     setOpenSolution(null);
     const action = solutionData[item.id]?.recommended_action ?? item.recommendedAction;
-    const config = getActionConfig(action);
+    const config = getActionConfig(action, item, solutionData[item.id] ?? null);
     toast.success(config.bestToast.title, {
       description: config.bestToast.description(item),
     });
@@ -930,7 +1353,7 @@ export default function InventoryManagement() {
   const handleSupplier = (item: InventoryItem) => {
     setOpenSolution(null);
     const action = solutionData[item.id]?.recommended_action ?? item.recommendedAction;
-    const config = getActionConfig(action);
+    const config = getActionConfig(action, item, solutionData[item.id] ?? null);
     toast.info(config.altToast.title, {
       description: config.altToast.description(item),
     });
@@ -964,8 +1387,8 @@ export default function InventoryManagement() {
       <div className="p-8 space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Inventory Management</h1>
-          <p className="text-sm text-foreground mt-1">
-            View predicted demand with the alerts, and execute recommended solutions.
+          <p className="text-sm text-white mt-1">
+            Manage inventory levels, respond to alerts, and execute transfers.
           </p>
           <div className="mt-4">
             <Button
@@ -1074,13 +1497,15 @@ export default function InventoryManagement() {
                           {item.status}
                         </span>
                       </td>
-                      <td className="py-4 px-4 text-foreground">{item.recommendedAction}</td>
+                      <td className="py-4 px-4 text-foreground">{capitalizeWords(item.recommendedAction)}</td>
                       <td className="py-4 px-4 text-center">
-                        {item.recommendedAction && item.recommendedAction !== "None" ? (
+                        {/* Do not show View Solution for healthy items */}
+                        {item.status !== "Healthy" && item.recommendedAction && item.recommendedAction !== "none" ? (
                           <Button
                             size="sm"
                             className="bg-orange-500 hover:bg-orange-600 text-white text-xs h-8 px-4 min-w-[120px]"
                             onClick={() => {
+                              if (item.status === "Healthy") return; // guard
                               const nextOpen = openSolution === item.id ? null : item.id;
                               setOpenSolution(nextOpen);
                               if (nextOpen) {
