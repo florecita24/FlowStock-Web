@@ -149,7 +149,7 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
     alerts.push({
       id: `c-${i.id}`,
       type: "critical",
-      title: idx === 0 ? "Impending Stockout" : "Low Stock Warning",
+      title: "Low Stock Warning",
       body: `${warehouseName} has only ${i.current_stock} units of ${productName} remaining (shortage of ${i.shortage}).`,
       time: `${(idx + 1) * 2}m ago`,
       productId: i.product_id,
@@ -258,6 +258,10 @@ export default function Dashboard() {
       (i.status || "").toLowerCase().includes("critical")
     ).length;
 
+    const almostExpiredCount = inventory.filter((i) =>
+      (i.status || "").toLowerCase().includes("almost expired")
+    ).length;
+
     const overstockCount = inventory.filter((i) =>
       (i.status || "").toLowerCase().includes("overstock")
     ).length;
@@ -294,6 +298,19 @@ export default function Dashboard() {
         iconBg: "bg-red-100",
       },
       {
+        title: "Almost Expired",
+        value: `${almostExpiredCount} Items`,
+        badge: almostExpiredCount > 0 ? "Review" : "Healthy",
+        badgeColor:
+          almostExpiredCount > 0
+            ? "bg-yellow-100 text-yellow-700"
+            : "bg-green-100 text-green-700",
+        sub: almostExpiredCount > 0 ? "Attention needed" : "No urgent expiry risk",
+        dot: almostExpiredCount > 0,
+        icon: <Clock className="w-5 h-5 text-yellow-600" />,
+        iconBg: "bg-yellow-100",
+      },
+      {
         title: "Overstock Warning",
         value: `${overstockCount} Items`,
         badge: overstockCount > 0 ? "Review" : "Healthy",
@@ -307,11 +324,11 @@ export default function Dashboard() {
         dot: false,
       },
       {
-        title: "Sales Trend Prediction",
+        title: "Sales Trend Prediction (14 days)",
         value: `${Number(growthPct) >= 0 ? "+" : ""}${growthPct}%`,
         badge: null as string | null,
         badgeColor: "",
-        sub: "Demand vs current stock",
+        sub: "Predicted demand vs current stock",
         icon: <TrendingUp className="w-5 h-5 text-purple-600" />,
         iconBg: "bg-purple-100",
         dot: false,
@@ -367,7 +384,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-8">
+      <div className="p-6 space-y-6">
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-foreground">Overview</h1>
@@ -375,9 +392,9 @@ export default function Dashboard() {
         </div>
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           {statCards.map((card) => (
-            <div key={card.title} className="bg-white rounded-2xl p-6 shadow-sm border border-border">
+            <div key={card.title} className="bg-white rounded-2xl p-4 shadow-sm border border-border">
               <div className="flex items-start justify-between mb-3">
                 <p className="text-sm text-muted-foreground">{card.title}</p>
                 <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${card.iconBg}`}>
@@ -403,7 +420,7 @@ export default function Dashboard() {
         {/* Main Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           {/* Regional Stock Distribution */}
-          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col self-start">
+          <div className="lg:col-span-2 bg-white rounded-2xl p-4 shadow-sm border border-border flex flex-col self-start">
             <div className="flex items-center justify-between mb-4 flex-shrink-0">
               <h2 className="text-lg font-bold text-foreground">Regional Stock Distribution</h2>
               <div className="flex gap-4">
@@ -435,7 +452,7 @@ export default function Dashboard() {
           </div>
 
           {/* AI Action Alerts */}
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-border flex flex-col">
+          <div className="bg-white rounded-2xl p-4 shadow-sm border border-border flex flex-col">
             <div className="flex items-center justify-between mb-6 flex-shrink-0">
               <h2 className="text-lg font-bold text-foreground">AI Action Alerts</h2>
               <button
@@ -489,7 +506,7 @@ export default function Dashboard() {
                 return (
                   <div
                     key={alert.id}
-                    className={`border rounded-lg p-4 ${
+                    className={`border rounded-lg p-3 ${
                       isCritical
                         ? "border-red-100 bg-red-50"
                         : isWarning
@@ -549,7 +566,7 @@ export default function Dashboard() {
           <div className="space-y-4 py-2">
             {selectedAlert && selectedAlert.type === "critical" ? (
               <>
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
                   <p className="text-sm font-semibold text-red-700">{selectedAlert.title}</p>
                   <p className="text-sm text-foreground mt-1">{selectedAlert.body}</p>
                 </div>
@@ -604,7 +621,7 @@ export default function Dashboard() {
               return (
                 <div
                   key={alert.id}
-                  className={`rounded-lg p-4 border ${
+                  className={`rounded-lg p-3 border ${
                     isRed    ? "border-red-100 bg-red-50" :
                     isYellow ? "border-yellow-100 bg-yellow-50" :
                                "border-green-100 bg-green-50"
