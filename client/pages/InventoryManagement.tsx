@@ -35,7 +35,7 @@ interface InventoryItem {
   predictedDemand: number;
   shortage?: number;
   expiryDate: string;
-  status: "Healthy" | "Critical" | "Overstock";
+  status: "Healthy" | "Critical" | "Overstock" | "Almost Expired";
   recommendedAction: string;
   harga: string;
   berat: string;
@@ -132,16 +132,25 @@ function computeOptionCosts(item: InventoryItem, option: SolutionOption | undefi
   let donorsUsed: Array<{ warehouse: string; qty: number; distance_km: number; shipping: number }> = [];
 
   if (Array.isArray(cb?.donors) && cb!.donors.length > 0) {
-    // donors should be [{warehouse, available_qty, distance_km}]
+    // donors should be [{warehouse, qty, available_qty, distance_km, shipping_cost}]
     let remaining = quantity;
-    const donors = (cb!.donors as any[]).slice().sort((a, b) => (b.available_qty || 0) - (a.available_qty || 0));
+    const donors = (cb!.donors as any[]).slice().sort((a, b) => {
+      const aDistance = Number(a.distance_km) || 0;
+      const bDistance = Number(b.distance_km) || 0;
+      if (aDistance !== bDistance) return aDistance - bDistance;
+      return (Number(b.available_qty) || 0) - (Number(a.available_qty) || 0);
+    });
     for (const d of donors) {
       if (remaining <= 0) break;
-      const avail = Math.max(0, Number(d.available_qty) || 0);
+      const avail = Math.max(0, Number(d.available_qty ?? d.qty) || 0);
       if (avail <= 0) continue;
       const take = Math.min(avail, remaining);
       const dist = Number(d.distance_km) || Number(d.distance) || distTransfer;
-      const ship = Math.max(8000, weightKg * take * baseRate * (dist / 100) * 0.6);
+      const ship = Number.isFinite(Number(d.shipping_cost))
+        ? Number(d.shipping_cost)
+        : Number.isFinite(Number(d.shipping))
+          ? Number(d.shipping)
+          : Math.max(8000, weightKg * take * baseRate * (dist / 100) * 0.6);
       donorsUsed.push({ warehouse: d.warehouse ?? d.name ?? "donor", qty: take, distance_km: dist, shipping: ship });
       shippingTransfer += ship;
       remaining -= take;
@@ -227,12 +236,14 @@ function buildInsightNarrative(item: InventoryItem, solution: RecommendationExpl
     bestCb: {
       item_cost: bestIsTransfer ? 0 : (bestCb?.item_cost ?? derivedBest.itemCost),
       shipping_cost: bestIsTransfer ? derivedBest.shippingTransfer : (bestCb?.shipping_cost ?? derivedBest.shippingFromSupplier),
+      markdown_cost: bestCb?.markdown_cost ?? 0,
       other_costs: bestCb?.other_costs ?? derivedBest.otherCosts,
       total_cost: bestTotal,
     },
     altCb: {
       item_cost: altIsTransfer ? 0 : (altCb?.item_cost ?? derivedAlt.itemCost),
       shipping_cost: altIsTransfer ? derivedAlt.shippingTransfer : (altCb?.shipping_cost ?? derivedAlt.shippingFromSupplier),
+      markdown_cost: altCb?.markdown_cost ?? 0,
       other_costs: altCb?.other_costs ?? derivedAlt.otherCosts,
       total_cost: altTotal,
     },
@@ -252,10 +263,11 @@ function formatExpiryDate(date: string | null): string {
   return `${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 }
 
-function normalizeStatus(status: string): "Healthy" | "Critical" | "Overstock" {
+function normalizeStatus(status: string): "Healthy" | "Critical" | "Overstock" | "Almost Expired" {
   const lower = status.toLowerCase();
   if (lower.includes("critical")) return "Critical";
   if (lower.includes("overstock")) return "Overstock";
+  if (lower.includes("almost expired")) return "Almost Expired";
   return "Healthy";
 }
 
@@ -281,7 +293,7 @@ function mapInventoryRow(row: Inventory): InventoryItem {
   };
 }
 
-const statuses = ["All Statuses", "Critical", "Healthy", "Overstock"];
+const statuses = ["All Statuses", "Critical", "Healthy", "Overstock", "Almost Expired"];
 
 type ActionKind = "transfer" | "order" | "discount" | "monitor";
 
@@ -367,6 +379,7 @@ function getActionConfig(action: string): ActionButtonConfig {
 
 function statusColor(s: string) {
   if (s === "Critical")  return "bg-red-100 text-red-700";
+  if (s === "Almost Expired") return "bg-yellow-100 text-yellow-800";
   if (s === "Overstock") return "bg-orange-100 text-orange-700";
   return "bg-green-100 text-green-700";
 }
@@ -422,6 +435,18 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
   const altShipping = insight.altCb?.shipping_cost ?? 0;
   const altOther = insight.altCb?.other_costs ?? 0;
   const altTotal = insight.altCb?.total_cost ?? insight.altTotal
+  const isAltOptionTransfer = (alternativeOption?.title ?? "").toLowerCase().includes("transfer") || (solution?.recommended_action === "Transfer");
+  const isSupplierCompactView = solution?.recommended_action === "Transfer" && (alternativeOption?.title ?? "").toLowerCase().includes("order");
+  const isHoldMonitorView = solution?.recommended_action === "Discount" && /hold|monitor/i.test(alternativeOption?.title ?? "");
+  const isBestDiscountView = solution?.recommended_action === "Discount" || /discount/i.test(bestOption?.title ?? "");
+  const bestMarkdownCost = isBestDiscountView
+    ? (typeof insight.bestCb?.markdown_cost === "number"
+      ? insight.bestCb.markdown_cost
+      : Math.max(bestTotal - bestShipping - bestOther, 0))
+    : 0;
+  const supplierCompactQty = Math.max(item.shortage ?? insight.quantity, 1);
+  const supplierCompactItemCost = item.productPrice > 0 ? item.productPrice * supplierCompactQty : altItemCost;
+  const supplierCompactTotal = supplierCompactItemCost + altShipping + altOther;
 
   return (
     <tr>
@@ -470,23 +495,31 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                   {/* Estimation Cost Table - Best Option */}
                   <div className="bg-white/90 border border-orange-200/60 rounded-lg p-3 text-xs space-y-1.5 shadow-sm">
                     <p className="font-bold text-gray-800 border-b border-gray-100 pb-1">Estimate breakdown</p>
-                    <div className="flex justify-between">
-                      <span className="text-gray-500">Item valuation cost:</span>
-                      <span className="font-medium text-gray-700">
-                        {(() => {
-                          const price = item.productPrice ?? 0;
-                          const bestIsOrderLocal = (solution?.recommended_action === "Order") || ((bestOption?.title ?? "").toLowerCase().includes("order"));
-                          const bestIsTransferLocal = (solution?.recommended_action === "Transfer") || ((bestOption?.title ?? "").toLowerCase().includes("transfer"));
-                          const qtyForBest = bestIsOrderLocal ? (item.shortage ?? insight.quantity) : insight.quantity;
-                          if (bestIsTransferLocal) return formatMoney(0);
-                          if (bestIsOrderLocal && price > 0 && qtyForBest > 0) {
-                            return `${qtyForBest} × ${formatPrice(price)} = ${formatMoney(price * qtyForBest)}`;
-                          }
-                          if (bestItemCost > 0) return formatMoney(bestItemCost);
-                          return price > 0 ? `${formatMoney(price * qtyForBest)}` : "Price missing";
-                        })()}
-                      </span>
-                    </div>
+                    {!isBestDiscountView && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Item valuation cost:</span>
+                        <span className="font-medium text-gray-700">
+                          {(() => {
+                            const price = item.productPrice ?? 0;
+                            const bestIsOrderLocal = (solution?.recommended_action === "Order") || ((bestOption?.title ?? "").toLowerCase().includes("order"));
+                            const bestIsTransferLocal = (solution?.recommended_action === "Transfer") || ((bestOption?.title ?? "").toLowerCase().includes("transfer"));
+                            const qtyForBest = bestIsOrderLocal ? (item.shortage ?? insight.quantity) : insight.quantity;
+                            if (bestIsTransferLocal) return formatMoney(0);
+                            if (bestIsOrderLocal && price > 0 && qtyForBest > 0) {
+                              return `${qtyForBest} × ${formatPrice(price)} = ${formatMoney(price * qtyForBest)}`;
+                            }
+                            if (bestItemCost > 0) return formatMoney(bestItemCost);
+                            return price > 0 ? `${formatMoney(price * qtyForBest)}` : "Price missing";
+                          })()}
+                        </span>
+                      </div>
+                    )}
+                    {isBestDiscountView && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">Markdown cost:</span>
+                        <span className="font-medium text-gray-700">{formatMoney(bestMarkdownCost)}</span>
+                      </div>
+                    )}
                     {/* If transfer, show donors list */}
                     {((solution?.recommended_action === "Transfer") || ((bestOption?.title ?? "").toLowerCase().includes("transfer"))) && (
                       <div className="mt-2 text-xs text-muted-foreground">
@@ -501,9 +534,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                       </div>
                     )}
                     <div className="flex justify-between">
-                      <span className="text-gray-500">
-                        {action === "Transfer" ? "Transfer shipping:" : action === "Order" ? "Supplier shipping:" : "Campaign cost:"}
-                      </span>
+                      <span className="text-gray-500">{isBestOptionTransfer ? "Transfer shipping:" : "Supplier shipping:"}</span>
                       <span className="font-medium text-gray-700">{formatMoney(bestShipping)}</span>
                     </div>
                     <div className="flex justify-between">
@@ -512,7 +543,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                     </div>
                     <div className="flex justify-between border-t border-dashed border-gray-200 pt-1.5 mt-1 font-bold text-sm">
                       <span className="text-gray-900">Total Operational Value:</span>
-                      <span className="text-orange-600">{formatMoney(bestTotal)}</span>
+                      <span className="text-orange-600">{formatMoney(isBestDiscountView ? bestMarkdownCost + bestShipping + bestOther : bestTotal)}</span>
                     </div>
                   </div>
                 </div>
@@ -534,11 +565,13 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                 <div className="space-y-3">
                   <div>
                     <h4 className="font-bold text-gray-900 text-base">{insight.altTitle}</h4>
-                    <p className="text-xs text-amber-600 font-semibold mt-0.5">{insight.altDesc}</p>
+                    <p className="text-xs text-amber-600 font-semibold mt-0.5">
+                      {isSupplierCompactView ? "Fulfill stock deficit via direct external supplier order." : insight.altDesc}
+                    </p>
                   </div>
                   
                   <p className="text-xs text-gray-600 leading-relaxed">
-                    {insight.altBody}
+                    {isSupplierCompactView ? "Processing best optimal logistics configuration parameters." : insight.altBody}
                   </p>
 
                   {/* Estimation Cost Table - Alternative Option */}
@@ -548,6 +581,10 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                       <span className="text-gray-500">Item valuation cost:</span>
                       <span className="font-medium text-gray-700">
                         {(() => {
+                          if (isHoldMonitorView) return formatMoney(0);
+                          if (isSupplierCompactView) {
+                            return `${supplierCompactQty} × ${formatPrice(item.productPrice)} = ${formatMoney(supplierCompactItemCost)}`;
+                          }
                           const price = item.productPrice ?? 0;
                           const altIsOrderLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("order"));
                           const altIsTransferLocal = ((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer");
@@ -561,7 +598,7 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                         })()}
                       </span>
                     </div>
-                    {(((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer")) && (
+                    {!isSupplierCompactView && (((solution?.alternative_option?.title ?? "").toLowerCase().includes("transfer")) || (solution?.recommended_action === "Transfer")) && (
                       <div className="mt-2 text-xs text-muted-foreground">
                         <p className="font-semibold text-sm">Donor hubs:</p>
                         {insight.altDonors && insight.altDonors.length > 0 ? (
@@ -574,18 +611,16 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                       </div>
                     )}
                     <div className="flex justify-between">
-                      <span className="text-gray-500">
-                        {action === "Transfer" ? "Supplier shipping:" : action === "Order" ? "Transfer shipping:" : "Holding cost overhead:"}
-                      </span>
-                      <span className="font-medium text-gray-700">{formatMoney(altShipping)}</span>
+                      <span className="text-gray-500">{isAltOptionTransfer ? "Transfer shipping:" : "Supplier shipping:"}</span>
+                      <span className="font-medium text-gray-700">{formatMoney(isHoldMonitorView ? 0 : altShipping)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">Handling / Other:</span>
-                      <span className="font-medium text-gray-700">{formatMoney(altOther)}</span>
+                      <span className="font-medium text-gray-700">{formatMoney(isHoldMonitorView ? 0 : altOther)}</span>
                     </div>
                     <div className="flex justify-between border-t border-dashed border-gray-200 pt-1.5 mt-1 font-bold text-sm">
                       <span className="text-gray-900">Total Operational Value:</span>
-                      <span className="text-gray-900">{formatMoney(altTotal)}</span>
+                      <span className="text-gray-900">{formatMoney(isHoldMonitorView ? 0 : (isSupplierCompactView ? supplierCompactTotal : altTotal))}</span>
                     </div>
                   </div>
                 </div>
@@ -593,11 +628,11 @@ function AIRecommendationPanel({ item, solution, loading, error, onApprove, onSu
                 <div className="grid grid-cols-2 gap-4 mt-4 pt-2 border-t border-gray-100">
                   <div>
                     <span className="text-[11px] font-medium text-gray-400 block uppercase tracking-wider">Risk</span>
-                    <span className="text-xs font-bold text-amber-600">{alternativeOption?.riskLevel ?? "Medium"}</span>
+                    <span className="text-xs font-bold text-amber-600">{isHoldMonitorView ? "Low" : (isSupplierCompactView ? "Low" : (alternativeOption?.riskLevel ?? "Medium"))}</span>
                   </div>
                   <div>
                     <span className="text-[11px] font-medium text-gray-400 block uppercase tracking-wider">Feasibility</span>
-                    <span className="text-xs font-bold text-amber-600">{alternativeOption?.feasibility ?? "Medium"}</span>
+                    <span className="text-xs font-bold text-amber-600">{isHoldMonitorView ? "High" : (isSupplierCompactView ? "High" : (alternativeOption?.feasibility ?? "Medium"))}</span>
                   </div>
                 </div>
               </div>
