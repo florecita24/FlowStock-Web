@@ -423,7 +423,7 @@ export default function SalesPrediction() {
           </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
           {/* Chart */}
           <div className="lg:col-span-3 bg-white rounded-2xl p-6 shadow-sm border border-border">
             <div className="flex items-center justify-between mb-2">
@@ -550,54 +550,54 @@ export default function SalesPrediction() {
               </div>
             )}
           </div>
-        </div>
 
-        {/* AI Insight */}
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-border">
-          <div className="flex items-start gap-4">
-            <div className="w-10 h-10 bg-pink-200 rounded-lg flex items-center justify-center flex-shrink-0">
-              <Lightbulb className="w-6 h-6 text-pink-600" />
-            </div>
-            <div className="flex-1">
-              <div className="flex items-center gap-2 mb-2 flex-wrap">
-                <h3 className="font-bold text-foreground">AI Insight</h3>
-                {/* Month context pill */}
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
-                  {selectedMonth}
-                </span>
-                {aiInsight?.source && (
-                  <span
-                    className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                      aiInsight.source === "llm"
-                        ? "bg-purple-100 text-purple-700"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {aiInsight.source === "llm" ? "LLM (Qwen)" : aiInsight.source}
+          {/* AI Insight */}
+          <div className="lg:col-span-1 bg-white rounded-2xl p-5 shadow-sm border border-border self-start">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 bg-pink-200 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Lightbulb className="w-6 h-6 text-pink-600" />
+                </div>
+                <div className="flex items-center gap-2 flex-wrap min-w-0">
+                  <h3 className="font-bold text-foreground">AI Insight</h3>
+                  {/* Month context pill */}
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
+                    {selectedMonth}
                   </span>
-                )}
-                {forecastMetrics && (
-                  <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                    MAPE {(forecastMetrics.mape).toFixed(1)}% · R² {forecastMetrics.r2.toFixed(2)}
-                  </span>
-                )}
+                  {aiInsight?.source && (
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                        aiInsight.source === "llm"
+                          ? "bg-purple-100 text-purple-700"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
+                      {aiInsight.source === "llm" ? "LLM (Qwen)" : aiInsight.source}
+                    </span>
+                  )}
+                  {forecastMetrics && (
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
+                      MAPE {(forecastMetrics.mape).toFixed(1)}% · R² {forecastMetrics.r2.toFixed(2)}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {insightLoading ? (
-                <p className="text-sm text-muted-foreground animate-pulse">
+                <p className="text-sm text-muted-foreground animate-pulse pl-0">
                   Analyzing {selectedMonth === "All months" ? "full year" : selectedMonth} data...
                 </p>
               ) : insightError && !aiInsight ? (
-                <p className="text-sm text-red-600">
+                <p className="text-sm text-red-600 pl-0">
                   AI insight unavailable: {insightError}
                 </p>
               ) : aiInsight ? (
-                <div className="space-y-3">
+                <div className="space-y-3 pl-0">
                   <p className="text-sm text-foreground leading-relaxed">
                     {aiInsight.summary}
                   </p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-3">
                     <div className="bg-orange-50 border border-orange-100 rounded-lg p-3">
                       <p className="text-[11px] font-bold text-orange-700 uppercase tracking-wider mb-1">
                         Stockout Risk
@@ -639,7 +639,7 @@ export default function SalesPrediction() {
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground leading-relaxed">
+                <p className="text-sm text-muted-foreground leading-relaxed pl-0">
                   Select a product to generate AI insight.
                 </p>
               )}
