@@ -2,11 +2,13 @@ import { RequestHandler } from "express";
 import { supabase } from "../lib/supabase";
 import { ListResponse, Inventory } from "../../shared/api";
 
-const FLOWSTOCK_AI_BASE_URL =
-  process.env.FLOWSTOCK_AI_BASE_URL?.trim() || "https://fhatikaadr-flowstock-ai-1.hf.space";
+const FLOWSTOCK_AI_1_BASE_URL =
+  process.env.FLOWSTOCK_AI_1_BASE_URL?.trim() ||
+  process.env.FLOWSTOCK_AI_BASE_URL?.trim() || // backward compat
+  "https://fhatikaadr-flowstock-ai-1.hf.space";
 
 async function syncInventoryWithFlowStockAI() {
-  const url = `${FLOWSTOCK_AI_BASE_URL.replace(/\/$/, "")}/api/sync-inventory`;
+  const url = `${FLOWSTOCK_AI_1_BASE_URL.replace(/\/$/, "")}/api/sync-inventory`;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
