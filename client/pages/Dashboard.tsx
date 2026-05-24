@@ -425,7 +425,7 @@ export default function Dashboard() {
               <h2 className="text-lg font-bold text-foreground">Regional Stock Distribution</h2>
               <div className="flex gap-4">
                 <div className="flex items-center gap-1.5">
-                  <div className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ background: "#10B981" }} />
                   <span className="text-xs text-muted-foreground">Healthy</span>
                 </div>
                 <div className="flex items-center gap-1.5">

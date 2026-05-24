@@ -416,7 +416,7 @@ export default function SalesPrediction() {
       <div className="p-8 space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-foreground">
-            Predictive Analytics & What-If Simulator
+            Sales Prediction
           </h1>
           <p className="text-sm text-white mt-1">
             Simulate future sales trends with the AI Prediction Engine.
