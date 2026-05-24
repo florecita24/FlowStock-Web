@@ -18,9 +18,10 @@ const makeIcon = (color: string) =>
   });
 
 const statusColor: Record<string, string> = {
-  healthy: "#f97316",
-  critical: "#ef4444",
-  overstock: "#f59e0b",
+  healthy: "#10B981", // green
+  critical: "#EF4444", // red
+  overstock: "#F59E0B", // orange
+  almost_expired: "#FACC15", // yellow
 };
 
 interface WarehouseMarker {
@@ -28,7 +29,7 @@ interface WarehouseMarker {
   lat: number;
   lng: number;
   stock: number;
-  status: "healthy" | "critical" | "overstock";
+  status: "healthy" | "critical" | "overstock" | "almost_expired";
   months: number;
 }
 
@@ -48,18 +49,32 @@ function aggregateWarehouseStats(
       const items = inventory.filter((i) => i.warehouse_id === w.id);
       const stock = items.reduce((sum, i) => sum + (i.current_stock || 0), 0);
 
-      let criticalCount = 0;
-      let overstockCount = 0;
+      const counts: Record<string, number> = {
+        healthy: 0,
+        critical: 0,
+        overstock: 0,
+        almost_expired: 0,
+      };
+
       items.forEach((i) => {
         const s = (i.status || "").toLowerCase();
-        if (s.includes("critical")) criticalCount++;
-        else if (s.includes("overstock")) overstockCount++;
+        if (s.includes("critical")) counts.critical++;
+        else if (s.includes("overstock")) counts.overstock++;
+        else if (s.includes("almost expired") || s.includes("almost_expired") || s.includes("almost")) counts.almost_expired++;
+        else counts.healthy++;
       });
 
-      let status: "healthy" | "critical" | "overstock" = "healthy";
-      if (criticalCount > 0) status = "critical";
-      else if (overstockCount > items.length / 2 && items.length > 0)
-        status = "overstock";
+      // pick majority status (highest count). tie-breaker: critical, overstock, almost_expired, healthy
+      let status: "healthy" | "critical" | "overstock" | "almost_expired" = "healthy";
+      const entries = Object.entries(counts);
+      entries.sort((a, b) => b[1] - a[1]);
+      if (entries[0][1] > 0) {
+        const top = entries[0][0];
+        if (top === "critical") status = "critical";
+        else if (top === "overstock") status = "overstock";
+        else if (top === "almost_expired") status = "almost_expired";
+        else status = "healthy";
+      }
 
       // Rough months-of-supply: total stock / total predicted demand
       const totalDemand = items.reduce(
@@ -145,9 +160,7 @@ export default function IndonesiaMap({ className = "w-full h-64" }: Props) {
               <div style={{ fontSize: 11, color: "#6b7280" }}>
                 Stock: {wh.stock.toLocaleString()}
               </div>
-              <div style={{ fontSize: 11, color: statusColor[wh.status] }}>
-                {wh.months} {wh.months === 1 ? "month" : "months"} supply
-              </div>
+              {/* months/supply removed per UX request */}
             </Popup>
           </Marker>
         ))}
