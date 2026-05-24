@@ -166,7 +166,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             ? `${HISTORICAL_YEAR}: `
             : `${PREDICTED_YEAR} (AI): `}
           <span style={{ color: p.color }}>
-            {p.value?.toLocaleString()} units
+            {p.value?.toLocaleString("id-ID")} units
           </span>
         </p>
       ))}
@@ -272,7 +272,8 @@ export default function SalesPrediction() {
         setHistDaily(histJson.dailyBuckets || {});
         setForecastMetrics(forecastJson.metrics ?? null);
 
-        // Convert AI forecast (daily date points) into our bucket format
+        // Convert AI forecast (daily date points) into our bucket format.
+        // Round each prediction up to a whole unit so the UI never shows fractional sales.
         const predWeeklyBuckets: Record<string, number> = {};
         const predDailyBuckets: Record<string, number> = {};
         for (const pt of forecastJson.forecast || []) {
@@ -283,8 +284,9 @@ export default function SalesPrediction() {
           const weekIdx = Math.min(3, Math.floor((day - 1) / 7));
           const weeklyKey = `${month}-${weekIdx}`;
           const dailyKey = `${month}-${day}`;
-          predWeeklyBuckets[weeklyKey] = (predWeeklyBuckets[weeklyKey] || 0) + (pt.predicted_sales || 0);
-          predDailyBuckets[dailyKey] = (predDailyBuckets[dailyKey] || 0) + (pt.predicted_sales || 0);
+          const value = Math.ceil(pt.predicted_sales || 0);
+          predWeeklyBuckets[weeklyKey] = (predWeeklyBuckets[weeklyKey] || 0) + value;
+          predDailyBuckets[dailyKey] = (predDailyBuckets[dailyKey] || 0) + value;
         }
         setPredWeekly(predWeeklyBuckets);
         setPredDaily(predDailyBuckets);
@@ -525,7 +527,7 @@ export default function SalesPrediction() {
                     peakInfo.peakSeries === "historical" ? "text-blue-600" : "text-green-600"
                   }`}
                 >
-                  {peakInfo.maxVal.toLocaleString()} units
+                  {peakInfo.maxVal.toLocaleString("id-ID")} units
                 </span>
                 <span className="text-xs text-muted-foreground">
                   on{" "}
@@ -622,7 +624,7 @@ export default function SalesPrediction() {
                     <p className="text-xs text-muted-foreground">
                       <span className="font-semibold">Peak:</span> {aiInsight.peak_week}
                       {aiInsight.peak_sales != null && (
-                        <> — {aiInsight.peak_sales.toLocaleString()} units</>
+                        <> — {Math.ceil(aiInsight.peak_sales).toLocaleString("id-ID")} units</>
                       )}
                     </p>
                   )}
