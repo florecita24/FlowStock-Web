@@ -28,7 +28,7 @@ Buat file `.env` di root project, lalu isi minimal variabel berikut:
 ```bash
 SUPABASE_URL=isi_dengan_url_supabase
 SUPABASE_ANON_KEY=isi_dengan_anon_key_supabase
-VITE_FLOWSTOCK_AI_1_BASE_URL=https://fhatikaadr-flowstock-ai-1.hf.space
+FLOWSTOCK_AI_1_BASE_URL=https://fhatikaadr-flowstock-ai-1.hf.space
 VITE_FLOWSTOCK_AI_2_BASE_URL=https://fhatikaadr-flowstock-ai-2.hf.space
 VITE_FLOWSTOCK_AI_3_BASE_URL=https://fhatikaadr-flowstock-ai-3.hf.space
 VITE_SALES_FORECAST_BASE_URL=https://naraurst-sales-prediction.hf.space
