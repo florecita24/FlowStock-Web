@@ -36,8 +36,10 @@ interface AIActionAlert {
   title: string;
   body: string;
   timeLabel: string;
+  productId: number | null;
   productName: string | null;
   sku: string | null;
+  warehouseId: number | null;
   warehouseName: string | null;
   currentStock: number | null;
   predictedDemand14d: number | null;
@@ -58,8 +60,11 @@ interface DashboardAlert {
   title: string;
   body: string;
   time: string;
+  productId: number | null;
   product: string | null;
+  warehouseId: number | null;
   warehouse: string | null;
+  targetStock: number | null;
   recommendedAction: "None" | "Transfer" | "Discount" | "Order" | null;
   ctaLabel: string | null;
   shortage: number | null;
@@ -72,16 +77,62 @@ function mapAIAlert(a: AIActionAlert): DashboardAlert {
     title: a.title,
     body: a.body,
     time: a.timeLabel,
+    productId: a.productId,
     product: a.productName,
+    warehouseId: a.warehouseId,
     warehouse: a.warehouseName,
+    targetStock: a.targetStock,
     recommendedAction: a.recommendedAction,
     ctaLabel: a.ctaLabel,
     shortage: a.shortage,
   };
 }
 
-function formatCurrency(value: number): string {
-  return `Rp ${value.toLocaleString("id-ID")}`;
+function formatMoney(value: number): string {
+  return `Rp ${Math.round(value).toLocaleString("id-ID")}`;
+}
+
+function buildOperationalValueText(item: Inventory, alert: DashboardAlert) {
+  const product = item.products;
+  const warehouse = item.warehouses;
+  const productName = product?.name ?? alert.product ?? `Product #${alert.productId ?? "?"}`;
+  const warehouseName = warehouse?.name ?? alert.warehouse ?? `Warehouse #${alert.warehouseId ?? "?"}`;
+  const sku = product?.sku ?? "-";
+  const price = product?.price ?? 0;
+  const weightKg = (product?.weight ?? 0) / 1000;
+  const action = alert.recommendedAction ?? "None";
+  const quantity = Math.max(alert.shortage ?? item.shortage ?? item.predicted_demand ?? 1, 1);
+
+  const orderItemCost = price * quantity;
+  const orderShippingCost = Math.max(15000, weightKg * quantity * 3200);
+  const orderOtherCosts = Math.max(5000, orderItemCost * 0.015);
+  const orderTotal = orderItemCost + orderShippingCost + orderOtherCosts;
+
+  const transferShippingCost = Math.max(8000, weightKg * quantity * 1800);
+  const transferOtherCosts = Math.max(5000, price * quantity * 0.01);
+  const transferTotal = transferShippingCost + transferOtherCosts;
+
+  const markdownQty = Math.max((item.current_stock ?? 0) - (item.predicted_demand ?? 0), 1);
+  const markdownTotal = price * markdownQty * 0.15 + Math.max(5000, markdownQty * 2500);
+
+  const totalOperationalValue =
+    action === "Transfer" ? transferTotal :
+    action === "Discount" ? markdownTotal :
+    orderTotal;
+
+  const fallbackTotal =
+    action === "Transfer" ? orderTotal :
+    action === "Discount" ? orderTotal :
+    transferTotal;
+
+  const body =
+    action === "Transfer"
+      ? `${warehouseName} should receive ${quantity} units of ${productName} (SKU ${sku}) to avoid a stockout. Estimated total operational value ${formatMoney(totalOperationalValue)} (transfer ${formatMoney(transferTotal)} vs order ${formatMoney(orderTotal)}).`
+      : action === "Discount"
+        ? `${warehouseName} is holding ${(item.current_stock ?? 0).toLocaleString()} units of ${productName} — above forecast demand ${(item.predicted_demand ?? 0).toLocaleString()}. Estimated markdown cost ${formatMoney(totalOperationalValue)} to move excess stock faster.`
+        : `${warehouseName} is projected to be short ${quantity} units of ${productName} (SKU ${sku}) within 14 days. Estimated total operational value ${formatMoney(totalOperationalValue)}; transfer fallback ${formatMoney(fallbackTotal)} if donor stock exists.`;
+
+  return { productName, warehouseName, body };
 }
 
 function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
@@ -101,8 +152,11 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       title: idx === 0 ? "Impending Stockout" : "Low Stock Warning",
       body: `${warehouseName} has only ${i.current_stock} units of ${productName} remaining (shortage of ${i.shortage}).`,
       time: `${(idx + 1) * 2}m ago`,
+      productId: i.product_id,
       product: productName,
+      warehouseId: i.warehouse_id,
       warehouse: warehouseName,
+      targetStock: null,
       recommendedAction: "Transfer",
       ctaLabel: "Execute Transfer Now",
       shortage: i.shortage,
@@ -123,8 +177,11 @@ function buildAlertsFromInventory(items: Inventory[]): DashboardAlert[] {
       title: "Overstock Alert",
       body: `${warehouseName} is holding ${i.current_stock.toLocaleString()} units of ${productName} — capital is locked.`,
       time: `${(idx + 1) * 30}m ago`,
+      productId: i.product_id,
       product: productName,
+      warehouseId: i.warehouse_id,
       warehouse: warehouseName,
+      targetStock: null,
       recommendedAction: "Discount",
       ctaLabel: "Review Simulation",
       shortage: null,
@@ -171,7 +228,7 @@ export default function Dashboard() {
         setAiAlertsLoading(true);
         setAiAlertsError(null);
         const res = await fetch(
-          `${FLOWSTOCK_AI_3_BASE_URL}/api/action-alerts?limit=3`
+          `${FLOWSTOCK_AI_3_BASE_URL}/api/action-alerts?limit=4`
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json: AIActionAlertsResponse = await res.json();
@@ -215,7 +272,7 @@ export default function Dashboard() {
     return [
       {
         title: "Total Inventory Value",
-        value: formatCurrency(totalValue),
+        value: formatMoney(totalValue),
         badge: "+2.4%",
         badgeColor: "bg-green-100 text-green-700",
         sub: "vs last month",
@@ -268,12 +325,34 @@ export default function Dashboard() {
     [inventory]
   );
 
-  const allAlerts = useMemo(() => {
-    if (aiAlerts.length > 0) return aiAlerts;
-    return inventoryAlerts;
-  }, [aiAlerts, inventoryAlerts]);
+  const inventoryIndex = useMemo(() => {
+    const map = new Map<string, Inventory>();
+    inventory.forEach((item) => {
+      map.set(`${item.product_id}:${item.warehouse_id}`, item);
+    });
+    return map;
+  }, [inventory]);
 
-  const topAlerts = allAlerts.slice(0, 2);
+  const enrichedAiAlerts = useMemo(() => {
+    return aiAlerts.map((alert) => {
+      const item = inventoryIndex.get(`${alert.productId ?? ""}:${alert.warehouseId ?? ""}`);
+      if (!item) return alert;
+      const resolved = buildOperationalValueText(item, alert);
+      return {
+        ...alert,
+        product: resolved.productName,
+        warehouse: resolved.warehouseName,
+        body: resolved.body,
+      };
+    });
+  }, [aiAlerts, inventoryIndex]);
+
+  const allAlerts = useMemo(() => {
+    if (enrichedAiAlerts.length > 0) return enrichedAiAlerts;
+    return inventoryAlerts;
+  }, [enrichedAiAlerts, inventoryAlerts]);
+
+  const topAlerts = allAlerts.slice(0, 4);
 
   const handleConfirmTransfer = () => {
     setTransferDialogOpen(false);
@@ -395,7 +474,11 @@ export default function Dashboard() {
                       : "View Details");
 
                 const handleCta = () => {
-                  if (alert.recommendedAction === "Transfer" || isCritical) {
+                  if (alert.ctaLabel === "Review Simulation" || alert.recommendedAction === "Discount") {
+                    if (alert.product) {
+                      handleReviewSimulation(alert.product);
+                    }
+                  } else if (alert.recommendedAction === "Transfer" || isCritical) {
                     setSelectedAlert(alert);
                     setTransferDialogOpen(true);
                   } else if (alert.product) {
@@ -555,7 +638,11 @@ export default function Dashboard() {
                               : "View Details");
                         const handleCta = () => {
                           setViewAllOpen(false);
-                          if (alert.recommendedAction === "Transfer" || isRed) {
+                          if (alert.ctaLabel === "Review Simulation" || alert.recommendedAction === "Discount") {
+                            if (alert.product) {
+                              handleReviewSimulation(alert.product);
+                            }
+                          } else if (alert.recommendedAction === "Transfer" || isRed) {
                             setSelectedAlert(alert);
                             setTransferDialogOpen(true);
                           } else if (alert.product) {
