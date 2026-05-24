@@ -37,6 +37,16 @@ export function createServer() {
     res.json({ message: ping });
   });
 
+  // Debug endpoint — confirms env vars are loaded at runtime (remove after debug)
+  app.get("/api/_debug/env", (_req, res) => {
+    res.json({
+      hasSupabaseUrl: Boolean(process.env.SUPABASE_URL),
+      hasSupabaseKey: Boolean(process.env.SUPABASE_ANON_KEY),
+      supabaseUrlPreview: process.env.SUPABASE_URL?.slice(0, 30) ?? null,
+      nodeEnv: process.env.NODE_ENV,
+    });
+  });
+
   app.get("/api/demo", handleDemo);
 
   // Products routes
