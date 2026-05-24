@@ -349,8 +349,9 @@ export default function SalesPrediction() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         item: selectedProduct.id,
-        month_label: selectedMonth,            // e.g. "March" or "All months"
-        forecast: filteredForecast,            // daily points for this month
+        product_name: selectedProduct.name,   // real name from Supabase, e.g. "Vanilla Ice Cream"
+        month_label: selectedMonth,
+        forecast: filteredForecast,
         historical: filteredHistorical,
         metrics: fullForecast.metrics,
       }),
@@ -577,7 +578,7 @@ export default function SalesPrediction() {
                 )}
                 {forecastMetrics && (
                   <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                    MAPE {forecastMetrics.mape.toFixed(2)}% · R² {forecastMetrics.r2.toFixed(2)}
+                    MAPE {(forecastMetrics.mape).toFixed(1)}% · R² {forecastMetrics.r2.toFixed(2)}
                   </span>
                 )}
               </div>
